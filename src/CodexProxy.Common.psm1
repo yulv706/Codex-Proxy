@@ -129,27 +129,33 @@ function Get-CodexApplicationInfo {
     $relativeExecutable = ([string]$application.Executable).Replace('/', '\')
     $executablePath = Join-Path $Package.InstallLocation $relativeExecutable
     $resourcesPath = Join-Path $Package.InstallLocation 'app\resources'
-    $helpers = [ordered]@{
-        CodexCli      = Join-Path $resourcesPath 'codex.exe'
-        SandboxSetup  = Join-Path $resourcesPath 'codex-windows-sandbox-setup.exe'
-        CommandRunner = Join-Path $resourcesPath 'codex-command-runner.exe'
-    }
+    $helperFiles = [ordered]@{}
+    Get-ChildItem -LiteralPath $resourcesPath -Filter 'codex*.exe' -File |
+        Sort-Object Name |
+        ForEach-Object { $helperFiles[$_.Name] = $_.FullName }
+
+    $requiredHelpers = @(
+        'codex.exe',
+        'codex-windows-sandbox-setup.exe',
+        'codex-command-runner.exe'
+    )
 
     if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
         throw "Codex application executable was not found: $executablePath"
     }
-    foreach ($entry in $helpers.GetEnumerator()) {
-        if (-not (Test-Path -LiteralPath $entry.Value -PathType Leaf)) {
-            throw "Required Codex helper was not found: $($entry.Value)"
+    foreach ($name in $requiredHelpers) {
+        if (-not $helperFiles.Contains($name)) {
+            throw "Required Codex helper was not found: $(Join-Path $resourcesPath $name)"
         }
     }
 
     [pscustomobject]@{
         ExecutablePath = $executablePath
         ManifestPath   = $manifestPath
-        CodexCli       = $helpers.CodexCli
-        SandboxSetup   = $helpers.SandboxSetup
-        CommandRunner  = $helpers.CommandRunner
+        CodexCli       = $helperFiles['codex.exe']
+        SandboxSetup   = $helperFiles['codex-windows-sandbox-setup.exe']
+        CommandRunner  = $helperFiles['codex-command-runner.exe']
+        HelperFiles    = $helperFiles
     }
 }
 
@@ -160,38 +166,39 @@ function Sync-CodexHelpers {
         [Parameter(Mandatory)]$Config
     )
 
-    $sourceFiles = [ordered]@{
-        'codex.exe'                         = $ApplicationInfo.CodexCli
-        'codex-windows-sandbox-setup.exe'   = $ApplicationInfo.SandboxSetup
-        'codex-command-runner.exe'          = $ApplicationInfo.CommandRunner
+    $sourceFiles = $ApplicationInfo.HelperFiles
+    if (-not $sourceFiles -or $sourceFiles.Count -eq 0) {
+        throw 'No Codex helper executables were discovered.'
     }
+
     $sourceHashes = @{}
     foreach ($entry in $sourceFiles.GetEnumerator()) {
         $sourceHashes[$entry.Key] = (Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256).Hash
     }
 
     $cacheDirectory = Join-Path $env:LOCALAPPDATA $Config.HelperCachePath
-    $cacheMatches = Test-Path -LiteralPath $cacheDirectory -PathType Container
-    if ($cacheMatches) {
-        foreach ($entry in $sourceFiles.GetEnumerator()) {
-            $candidate = Join-Path $cacheDirectory $entry.Key
-            if (
-                -not (Test-Path -LiteralPath $candidate -PathType Leaf) -or
-                (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne $sourceHashes[$entry.Key]
-            ) {
-                $cacheMatches = $false
-                break
-            }
+    $filesToCopy = @()
+    foreach ($entry in $sourceFiles.GetEnumerator()) {
+        $candidate = Join-Path $cacheDirectory $entry.Key
+        if (
+            -not (Test-Path -LiteralPath $candidate -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne $sourceHashes[$entry.Key]
+        ) {
+            $filesToCopy += $entry
         }
     }
 
-    $refreshed = $false
-    if (-not $cacheMatches) {
+    $refreshed = $filesToCopy.Count -gt 0
+    if ($refreshed) {
         New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
-        foreach ($entry in $sourceFiles.GetEnumerator()) {
-            Copy-Item -LiteralPath $entry.Value -Destination (Join-Path $cacheDirectory $entry.Key) -Force
+        foreach ($entry in $filesToCopy) {
+            $destination = Join-Path $cacheDirectory $entry.Key
+            Copy-Item -LiteralPath $entry.Value -Destination $destination -Force
+            $destinationHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+            if ($destinationHash -ne $sourceHashes[$entry.Key]) {
+                throw "Codex helper cache verification failed: $destination"
+            }
         }
-        $refreshed = $true
     }
 
     [pscustomobject]@{

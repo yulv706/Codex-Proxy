@@ -24,6 +24,7 @@ powershell.exe -NoLogo -NoProfile -File ".\Install-CodexProxy.ps1"
 - `Install-CodexProxy.ps1`：安装或修复桌面快捷方式。
 - `Uninstall-CodexProxy.ps1`：只移除属于本项目的桌面快捷方式。
 - `Test-CodexProxy.ps1`：只读诊断，不启动或关闭 Codex。
+- `tests/Test-SyncCodexHelpers.ps1`：helper 动态发现、同步和哈希校验的回归测试。
 - `assets/codex-official-transparent.ico`：桌面快捷方式图标。
 - `logs/launcher.log`：启动日志，首次运行后生成。
 
@@ -31,7 +32,7 @@ powershell.exe -NoLogo -NoProfile -File ".\Install-CodexProxy.ps1"
 
 启动器会先验证 7891 正在监听，然后动态查找最新的 `OpenAI.Codex` AppX 包及清单中的实际可执行文件。因此 Codex 更新并改变安装版本目录后，通常不需要修改项目。
 
-为避免直接从受保护的 `WindowsApps` 目录运行辅助程序所造成的模块加载错误，启动器会核对 `codex.exe`、`codex-windows-sandbox-setup.exe` 和 `codex-command-runner.exe` 的 SHA-256，并将与当前 Codex 版本一致的一组辅助程序同步到：
+为避免直接从受保护的 `WindowsApps` 目录运行辅助程序所造成的模块加载错误，启动器会动态发现官方资源目录中的所有 `codex*.exe`（包括 `codex.exe`、sandbox、command runner 和 code mode host），核对 SHA-256，并将与当前 Codex 版本一致的一组辅助程序同步到：
 
 ```text
 %LOCALAPPDATA%\OpenAI\Codex\bin\codex-proxy-current
