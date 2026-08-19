@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 Set-StrictMode -Version Latest
@@ -76,7 +76,37 @@ try {
         throw 'An unchanged helper cache should not be refreshed.'
     }
 
-    Write-Host 'PASS: all discovered Codex helpers are synchronized and hash-verified.'
+    $stalePath = Join-Path $secondSync.CacheDirectory 'codex-obsolete.exe'
+    Set-Content -LiteralPath $stalePath -Value 'fixture:stale' -Encoding ASCII
+    $staleRepair = Sync-CodexHelpers -ApplicationInfo $applicationInfo -Config $config
+    if (-not $staleRepair.Refreshed -or (Test-Path -LiteralPath $stalePath)) {
+        throw 'A stale helper should trigger an atomic cache refresh and be removed.'
+    }
+
+    Set-Content -LiteralPath $staleRepair.CliPath -Value 'fixture:corrupt' -Encoding ASCII
+    $corruptionRepair = Sync-CodexHelpers -ApplicationInfo $applicationInfo -Config $config
+    if (-not $corruptionRepair.Refreshed) {
+        throw 'A corrupted helper should trigger an atomic cache refresh.'
+    }
+    $sourceCliHash = (Get-FileHash -LiteralPath $expectedHelperFiles['codex.exe'] -Algorithm SHA256).Hash
+    $repairedCliHash = (Get-FileHash -LiteralPath $corruptionRepair.CliPath -Algorithm SHA256).Hash
+    if ($sourceCliHash -ne $repairedCliHash) {
+        throw 'The corrupted helper was not repaired from the trusted source.'
+    }
+
+    Remove-Item -LiteralPath $expectedHelperFiles['codex-code-mode-host.exe'] -Force
+    try {
+        Get-CodexApplicationInfo -Package $package -Config $config | Out-Null
+        throw 'A missing codex-code-mode-host.exe should fail application discovery.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'A missing codex-code-mode-host.exe should fail application discovery.') { throw }
+        if ($_.Exception.Data['CodexProxyCode'] -ne 'CODEX_HELPER_MISSING') {
+            throw "Unexpected error for a missing code mode host: $($_.Exception.Message)"
+        }
+    }
+
+    Write-Host 'PASS: helper discovery, atomic refresh, stale cleanup, corruption repair, and required-set checks.'
 }
 finally {
     $env:LOCALAPPDATA = $originalLocalAppData

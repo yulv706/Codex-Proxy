@@ -1,54 +1,105 @@
-[CmdletBinding()]
-param()
+﻿[CmdletBinding(SupportsShouldProcess)]
+param(
+    [ValidateRange(1, 65535)][int]$ProxyPort = 7891,
+    [switch]$Portable,
+    [switch]$ForceShortcutReplacement
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$projectRoot = $PSScriptRoot
-$modulePath = Join-Path $projectRoot 'src\CodexProxy.Common.psm1'
-$configPath = Join-Path $projectRoot 'CodexProxy.config.psd1'
-$launcherPath = Join-Path $projectRoot 'Start-CodexProxy.ps1'
-$iconPath = Join-Path $projectRoot 'assets\codex-official-transparent.ico'
+$productVersion = '2.0.0'
+$sourceRoot = $PSScriptRoot
+$sourceModulePath = Join-Path $sourceRoot 'src\CodexProxy.Common.psm1'
+$sourceConfigPath = Join-Path $sourceRoot 'CodexProxy.config.psd1'
+Import-Module -Name $sourceModulePath -Force
+$config = Get-CodexProxyConfig -Path $sourceConfigPath -ProxyPortOverride $ProxyPort
+$installRoot = if ($Portable) { $sourceRoot } else { $config.InstallDirectory }
 
-Import-Module -Name $modulePath -Force
-$config = Get-CodexProxyConfig -Path $configPath
-
-foreach ($requiredPath in @($launcherPath, $iconPath)) {
-    if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-        throw "Required project file was not found: $requiredPath"
+function Copy-ProductFile {
+    param([Parameter(Mandatory)][string]$RelativePath)
+    $source = Join-Path $sourceRoot $RelativePath
+    $destination = Join-Path $installRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "缺少安装文件：$source" }
+    if ([IO.Path]::GetFullPath($source) -eq [IO.Path]::GetFullPath($destination)) { return }
+    $destinationDirectory = Split-Path -Parent $destination
+    if (-not (Test-Path -LiteralPath $destinationDirectory)) { New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null }
+    $temporary = "$destination.installing-$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        Copy-Item -LiteralPath $source -Destination $temporary
+        Move-Item -LiteralPath $temporary -Destination $destination -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
     }
 }
 
-$desktopPath = [Environment]::GetFolderPath('Desktop')
-$shortcutPath = Join-Path $desktopPath $config.ShortcutName
-$powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$arguments = '-NoLogo -NoProfile -File "{0}"' -f $launcherPath
+if ($PSCmdlet.ShouldProcess($installRoot, $(if($Portable){'配置便携安装'}else{'安装或升级 Codex Proxy'}))) {
+    New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+    foreach ($relativePath in @(
+        'Start-CodexProxy.ps1', 'Test-CodexProxy.ps1', 'Install-CodexProxy.ps1',
+        'Uninstall-CodexProxy.ps1', 'CodexProxy.config.psd1', 'README.md',
+        'src\CodexProxy.Common.psm1', 'assets\codex-official-transparent.ico'
+    )) {
+        Copy-ProductFile -RelativePath $relativePath
+    }
 
-if (Test-Path -LiteralPath $shortcutPath -PathType Leaf) {
+    $userConfigPath = Join-Path $installRoot 'CodexProxy.user.psd1'
+    $userConfigTemporary = "$userConfigPath.installing-$([guid]::NewGuid().ToString('N')).tmp"
+    "@{`r`n    ProxyPort = $ProxyPort`r`n}`r`n" | Set-Content -LiteralPath $userConfigTemporary -Encoding UTF8
+    Move-Item -LiteralPath $userConfigTemporary -Destination $userConfigPath -Force
+
+    $launcherPath = Join-Path $installRoot 'Start-CodexProxy.ps1'
+    $iconPath = Join-Path $installRoot 'assets\codex-official-transparent.ico'
+    $desktopPath = [Environment]::GetFolderPath('Desktop')
+    $shortcutPath = Join-Path $desktopPath $config.ShortcutName
+    $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $arguments = Get-CodexProxyShortcutArguments -LauncherPath $launcherPath
+    $previousStatePath = Join-Path $installRoot 'install-state.json'
+    $previousState = if (Test-Path -LiteralPath $previousStatePath -PathType Leaf) { Get-Content -LiteralPath $previousStatePath -Raw | ConvertFrom-Json } else { $null }
+    $backupPath = if ($previousState -and $previousState.PSObject.Properties.Name -contains 'ReplacedShortcut' -and $previousState.ReplacedShortcut) { [string]$previousState.ReplacedShortcut } else { $null }
+
+    if (Test-Path -LiteralPath $shortcutPath -PathType Leaf) {
+        $existingStatus = Test-CodexProxyShortcut -Path $shortcutPath -LauncherPath $launcherPath
+        if (-not $existingStatus.Ready -and -not $existingStatus.Owned -and -not $ForceShortcutReplacement) {
+            throw "桌面上存在同名但不属于 Codex Proxy 的快捷方式。若确定要替换，请重新运行并添加 -ForceShortcutReplacement：$shortcutPath"
+        }
+        if (-not $existingStatus.Ready -and -not $existingStatus.Owned) {
+            $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+            $backupPath = "$shortcutPath.before-codex-proxy-$stamp.bak"
+            Copy-Item -LiteralPath $shortcutPath -Destination $backupPath
+        }
+    }
+
     $shell = New-Object -ComObject WScript.Shell
-    $existing = $shell.CreateShortcut($shortcutPath)
-    if ($existing.Arguments -ne $arguments -or $existing.TargetPath -ne $powershellPath) {
-        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        $backupPath = "$shortcutPath.before-project-$stamp.bak"
-        Copy-Item -LiteralPath $shortcutPath -Destination $backupPath
-        Write-Host "Existing shortcut backed up to: $backupPath"
-    }
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $powershellPath
+    $shortcut.Arguments = $arguments
+    $shortcut.WorkingDirectory = [Environment]::GetFolderPath('UserProfile')
+    $shortcut.IconLocation = "$iconPath,0"
+    $shortcut.Description = "$($config.ShortcutDescription)（端口 $ProxyPort）"
+    $shortcut.WindowStyle = 1
+    $shortcut.Save()
+
+    $verification = Test-CodexProxyShortcut -Path $shortcutPath -LauncherPath $launcherPath
+    if (-not $verification.Ready) { throw "快捷方式校验失败：$shortcutPath" }
+
+    $statePath = Join-Path $installRoot 'install-state.json'
+    [pscustomobject]@{
+        SchemaVersion       = 1
+        ProductVersion      = $productVersion
+        InstallMode         = if ($Portable) { 'Portable' } else { 'LocalAppData' }
+        InstallRoot         = $installRoot
+        LauncherPath        = $launcherPath
+        ShortcutPath        = $shortcutPath
+        ReplacedShortcut    = $backupPath
+        ProxyPort           = $ProxyPort
+        InstalledAtUtc      = [DateTime]::UtcNow.ToString('o')
+    } | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
+
+    Write-Host "Codex Proxy $productVersion 已安装：$installRoot" -ForegroundColor Green
+    Write-Host "桌面快捷方式：$shortcutPath"
+    Write-Host "代理地址：http://127.0.0.1:$ProxyPort"
+    Write-Host '未修改用户级、机器级或系统代理设置。'
+    Write-Host "如需检查状态：powershell.exe -NoLogo -NoProfile -File `"$(Join-Path $installRoot 'Test-CodexProxy.ps1')`""
 }
-
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $powershellPath
-$shortcut.Arguments = $arguments
-$shortcut.WorkingDirectory = $env:USERPROFILE
-$shortcut.IconLocation = "$iconPath,0"
-$shortcut.Description = $config.ShortcutDescription
-$shortcut.WindowStyle = 1
-$shortcut.Save()
-
-$verified = $shell.CreateShortcut($shortcutPath)
-if ($verified.TargetPath -ne $powershellPath -or $verified.Arguments -ne $arguments) {
-    throw "Shortcut verification failed: $shortcutPath"
-}
-
-Write-Host "Codex Proxy shortcut installed: $shortcutPath"
-Write-Host 'No user-level or machine-level proxy environment variables were changed.'

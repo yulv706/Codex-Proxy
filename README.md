@@ -1,73 +1,131 @@
 # Codex Proxy
 
-这是普通 OpenAI Codex Desktop 的本地代理启动项目，固定让通过本项目启动的 Codex 进程使用 `http://127.0.0.1:7891`。
+Codex Proxy 是面向 OpenAI Codex Windows Desktop 的本地代理启动器。它只给通过本项目启动的 Codex 进程树注入代理，不修改 Windows 系统代理，也不写入用户级或机器级代理环境变量。
+
+默认代理地址为 `http://127.0.0.1:7891`，用户可以在安装、启动或诊断时指定其他本地端口。
 
 本项目不包含 Codex++、远程调试端口或 Codex++ Proxy 逻辑。
 
-## 使用方法
+## 系统要求
 
-1. 启动 Clash Verge 或其他在 `127.0.0.1:7891` 提供 HTTP/Mixed 代理的程序。
-2. 完全退出已经运行的 Codex，包括系统托盘中的 Codex。
-3. 双击桌面的 `Codex-Proxy` 快捷方式。
+- Windows 10/11
+- Windows PowerShell 5.1
+- 从官方 Microsoft Store 安装的 OpenAI Codex
+- 在本机回环地址提供 HTTP/Mixed 代理的客户端，例如 Clash Verge 或 sing-box
 
-如果需要重新创建桌面快捷方式，请先进入项目目录，然后在 Windows PowerShell 中运行：
+## 安装
+
+进入项目目录，在 Windows PowerShell 中运行：
 
 ```powershell
 powershell.exe -NoLogo -NoProfile -File ".\Install-CodexProxy.ps1"
 ```
 
+未指定端口时默认使用 `7891`。例如改用 `7890`：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File ".\Install-CodexProxy.ps1" -ProxyPort 7890
+```
+
+默认安装到 `%LOCALAPPDATA%\CodexProxy`。桌面快捷方式始终指向这个稳定目录，因此移动或删除源码仓库不会破坏已经安装的快捷方式。所选端口保存在安装目录的 `CodexProxy.user.psd1` 中。
+
+如果确实希望快捷方式直接绑定当前项目目录，可使用便携模式：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File ".\Install-CodexProxy.ps1" -Portable -ProxyPort 7891
+```
+
+安装器不会静默覆盖不属于本项目的同名快捷方式。确认需要替换时才使用 `-ForceShortcutReplacement`；原快捷方式会被备份，并在卸载时恢复。
+
+## 使用
+
+1. 启动本地代理客户端，确认 HTTP/Mixed 端口与安装时填写的端口一致。
+2. 保存正在进行的 Codex 任务，并从系统托盘完全退出 Codex。
+3. 双击桌面的 `Codex-Proxy`。
+
+启动器会依次验证代理端口、HTTP CONNECT、官方 Store 包身份、文件签名、AppX 启动能力和 Codex 当前进程。helper 缓存损坏或版本变化时会原子刷新；启动命令执行后还会确认 Codex 进程确实出现。
+
+启动期间使用互斥锁，连续双击不会同时复制 helper 或重复启动 Codex。
+
+### 临时使用其他端口
+
+不修改已保存配置，只让本次启动使用其他端口：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Start-CodexProxy.ps1" -ProxyPort 7890
+```
+
+端口优先级为：命令行 `-ProxyPort` > `CodexProxy.user.psd1` > 默认值 `7891`。
+
+## helper 缓存
+
+为避免直接从受保护的 `WindowsApps` 目录运行 helper 造成模块加载错误，启动器会动态发现官方资源目录中的所有 `codex*.exe`。当前最低必需集合包括 `codex.exe`、sandbox setup、command runner 和 code mode host。
+
+缓存发布使用 staging 目录、SHA-256 校验、完整文件集合检查和目录级切换。复制失败不会覆盖上一份可用缓存，已被新版本移除的旧 helper 也不会残留。
+
+缓存目录为 `%LOCALAPPDATA%\OpenAI\Codex\bin\codex-proxy-current`。
+
+## 诊断与修复
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Test-CodexProxy.ps1"
+powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Test-CodexProxy.ps1" -Detailed
+powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Test-CodexProxy.ps1" -Json
+```
+
+修复稳定安装和桌面快捷方式：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Test-CodexProxy.ps1" -Repair
+```
+
+诊断退出码：
+
+- `0`：现在可以启动。
+- `2`：配置正常，但需要先退出正在运行的 Codex。
+- `1`：存在代理、安装、签名、快捷方式或系统依赖故障。
+
+默认日志位于 `%LOCALAPPDATA%\CodexProxy\logs\launcher.log`，自动轮转。日志写入失败不会阻断 Codex 启动；错误窗口会提供稳定错误码、处理建议和打开日志目录的入口。
+
+## 卸载
+
+默认删除桌面快捷方式和稳定安装目录，不卸载官方 Codex，也不删除代理客户端或 helper 缓存：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Uninstall-CodexProxy.ps1"
+```
+
+保留安装文件或同时清理 helper 缓存：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Uninstall-CodexProxy.ps1" -KeepInstalledFiles
+powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Uninstall-CodexProxy.ps1" -PurgeCache
+```
+
+卸载会要求确认，并且只删除经过安装身份和绝对路径校验的目录。
+
+## 测试
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File ".\tests\Run-Tests.ps1"
+```
+
+测试覆盖配置优先级与验证、启动锁、日志轮转、内部脚本解析、helper 原子刷新、损坏修复、旧文件清理和最低必需集合。GitHub Actions 会在 Windows PowerShell 5.1 下运行同一测试入口。
+
 ## 项目结构
 
-- `Start-CodexProxy.ps1`：主启动器，只负责普通 Codex Proxy。
-- `CodexProxy.config.psd1`：代理端口、Codex 包名、快捷方式名称等配置。
-- `src/CodexProxy.Common.psm1`：Codex 包发现、更新适配、辅助程序同步和日志功能。
-- `Install-CodexProxy.ps1`：安装或修复桌面快捷方式。
-- `Uninstall-CodexProxy.ps1`：只移除属于本项目的桌面快捷方式。
-- `Test-CodexProxy.ps1`：只读诊断，不启动或关闭 Codex。
-- `tests/Test-SyncCodexHelpers.ps1`：helper 动态发现、同步和哈希校验的回归测试。
-- `assets/codex-official-transparent.ico`：桌面快捷方式图标。
-- `logs/launcher.log`：启动日志，首次运行后生成。
-
-## 工作方式
-
-启动器会先验证 7891 正在监听，然后动态查找最新的 `OpenAI.Codex` AppX 包及清单中的实际可执行文件。因此 Codex 更新并改变安装版本目录后，通常不需要修改项目。
-
-为避免直接从受保护的 `WindowsApps` 目录运行辅助程序所造成的模块加载错误，启动器会动态发现官方资源目录中的所有 `codex*.exe`（包括 `codex.exe`、sandbox、command runner 和 code mode host），核对 SHA-256，并将与当前 Codex 版本一致的一组辅助程序同步到：
-
-```text
-%LOCALAPPDATA%\OpenAI\Codex\bin\codex-proxy-current
-```
-
-这个目录是运行缓存，不是另一个项目。Codex 更新后，下一次从快捷方式启动时会自动刷新。
-
-启动 Codex 时，项目仅给该次 Codex 进程树注入 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、WebSocket 代理变量及小写兼容变量，并向 Electron 传入 `--proxy-server`。它不会写入 Windows 用户级或机器级环境变量，也不会改变系统代理，因此其他程序不会因为本项目而使用 7891。
-
-## 诊断
-
-在 Windows PowerShell 中运行：
-
-```powershell
-powershell.exe -NoLogo -NoProfile -File ".\Test-CodexProxy.ps1"
-```
-
-常见情况：
-
-- `ProxyListening = False`：先启动本地代理客户端并确认 Mixed/HTTP 端口是 7891。
-- 提示 Codex 已运行：从托盘完全退出 Codex，再使用桌面快捷方式。
-- 启动失败：查看 `logs/launcher.log` 的最后几行。
-- 安全软件拦截：将整个项目目录加入可信目录。桌面快捷方式没有 `ExecutionPolicy Bypass`、隐藏窗口或远程调试参数；启动器只会在 AppX 容器内部隐藏一次临时 PowerShell 窗口，避免启动 Codex 时闪出控制台。
-
-## 卸载快捷方式
-
-```powershell
-powershell.exe -NoLogo -NoProfile -File ".\Uninstall-CodexProxy.ps1"
-```
-
-卸载脚本不会删除项目、Codex、代理客户端或辅助程序缓存。
+- `Start-CodexProxy.ps1`：统一启动入口。
+- `Test-CodexProxy.ps1`：只读诊断和显式修复入口。
+- `Install-CodexProxy.ps1`：稳定安装、升级和快捷方式修复。
+- `Uninstall-CodexProxy.ps1`：验证安装身份后卸载。
+- `CodexProxy.config.psd1`：安全默认值和产品配置。
+- `CodexProxy.user.psd1`：安装后生成的用户端口配置，不提交到 Git。
+- `src/CodexProxy.Common.psm1`：配置、健康状态、AppX、helper 缓存、日志和启动生命周期。
+- `tests/`：Windows PowerShell 5.1 回归测试。
 
 ## 配置边界
 
-Codex 官方的权限配置中，`network.proxy_url` 描述的是沙箱命令网络使用的代理监听器。这个项目的目标还包括 Codex Desktop/Electron 主进程和它启动的 CLI 子进程，因此使用专用启动器提供进程级代理环境和 Electron 代理参数。官方参考：<https://learn.chatgpt.com/docs/permissions#configuration-spec>。
+Codex 权限配置中的 `permissions.<name>.network.proxy_url` 是沙箱命令网络使用的代理监听器；官方文档同时说明，Codex 客户端服务流量使用单独的 HTTP/系统代理设置。本项目还需要覆盖 Desktop/Electron 主进程及其 CLI 子进程，因此使用进程级代理环境和 Electron `--proxy-server` 参数。官方参考：<https://learn.chatgpt.com/docs/permissions#what-the-network-proxy-does-not-control>。
 
 ## 声明
 

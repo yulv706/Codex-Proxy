@@ -1,3 +1,5 @@
 logs/*.log
+CodexProxy.user.psd1
+install-state.json
 *.bak
 *.tmp
