@@ -1,8 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [ValidateRange(1, 65535)][int]$ProxyPort,
-    [switch]$NoUI,
-    [switch]$Update
+    [switch]$NoUI
 )
 
 Set-StrictMode -Version Latest
@@ -16,16 +15,6 @@ $fallbackLogPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData
 $config = $null
 $launchLock = $null
 $runId = [guid]::NewGuid().ToString('N').Substring(0, 8)
-
-if ($Update) {
-    $updatePath = Join-Path $projectRoot 'Update-CodexProxy.ps1'
-    if (-not (Test-Path -LiteralPath $updatePath -PathType Leaf)) { throw "找不到更新模式脚本：$updatePath" }
-    $updateArguments = @{}
-    if ($PSBoundParameters.ContainsKey('ProxyPort')) { $updateArguments.ProxyPort = $ProxyPort }
-    if ($NoUI) { $updateArguments.NoUI = $true }
-    & $updatePath @updateArguments
-    exit $LASTEXITCODE
-}
 
 try {
     if ($PSVersionTable.PSEdition -ne 'Desktop') {
@@ -46,6 +35,24 @@ try {
         $exception.Data['CodexProxyCode'] = $status.BlockingCode
         $exception.Data['CodexProxyRemediation'] = $status.Remediation
         throw $exception
+    }
+
+    $automaticUpdate = Invoke-CodexAutomaticUpdate -InstalledPackage $status.Package -Config $config
+    if ($automaticUpdate.Updated) {
+        Write-CodexProxyLog -Path $config.LogFilePath -Message "自动更新成功：$($status.Package.Version) -> $($automaticUpdate.InstalledVersion)。" -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null
+        $status = Get-CodexProxyStatus -Config $config
+        if (-not $status.ReadyNow) {
+            $exception = New-Object System.InvalidOperationException($status.BlockingMessage)
+            $exception.Data['CodexProxyCode'] = $status.BlockingCode
+            $exception.Data['CodexProxyRemediation'] = $status.Remediation
+            throw $exception
+        }
+    }
+    elseif ($automaticUpdate.Attempted) {
+        Write-CodexProxyLog -Path $config.LogFilePath -Message "自动更新暂未完成：target=$($automaticUpdate.TargetVersion)；[$($automaticUpdate.Code)] $($automaticUpdate.Message)；继续启动当前版本。" -Level WARN -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null
+    }
+    elseif ($automaticUpdate.Reason -eq 'Cooldown') {
+        Write-CodexProxyLog -Path $config.LogFilePath -Message "自动更新处于冷却期：target=$($automaticUpdate.TargetVersion)；retryAfter=$($automaticUpdate.RetryAfterUtc.ToString('o'))；继续启动当前版本。" -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null
     }
 
     Write-CodexProxyLog -Path $config.LogFilePath -Message "使用 Codex 包 $($status.Package.Version)。" -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null

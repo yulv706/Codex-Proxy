@@ -20,7 +20,7 @@ $launcherPath = Join-Path $installRoot 'Start-CodexProxy.ps1'
 $updateLauncherPath = Join-Path $installRoot 'Update-CodexProxy.ps1'
 $desktopPath = [Environment]::GetFolderPath('Desktop')
 $shortcutPath = Join-Path $desktopPath $config.ShortcutName
-$updateShortcutPath = Join-Path $desktopPath $config.UpdateShortcutName
+$updateShortcutPath = Join-Path $desktopPath 'Codex-Proxy 更新.lnk'
 if ($state) {
     if ([IO.Path]::GetFullPath([string]$state.InstallRoot).TrimEnd('\') -ne [IO.Path]::GetFullPath($installRoot).TrimEnd('\')) { throw '安装状态中的安装目录与当前目标不一致，已拒绝卸载。' }
     if ([IO.Path]::GetFullPath([string]$state.LauncherPath) -ne [IO.Path]::GetFullPath($launcherPath)) { throw '安装状态中的启动器路径无效，已拒绝卸载。' }
@@ -45,16 +45,10 @@ else {
 
 if (Test-Path -LiteralPath $updateShortcutPath -PathType Leaf) {
     $updateShortcutStatus = Test-CodexProxyShortcut -Path $updateShortcutPath -LauncherPath $updateLauncherPath
-    if (-not $updateShortcutStatus.Ready) {
-        throw '桌面更新快捷方式与安装记录不匹配，因此没有删除。请先运行安装脚本修复，或手动确认快捷方式归属。'
-    }
-    if ($PSCmdlet.ShouldProcess($updateShortcutPath, '删除 Codex Proxy 更新快捷方式')) {
+    if ($updateShortcutStatus.Owned -and $PSCmdlet.ShouldProcess($updateShortcutPath, '删除旧版 Codex Proxy 更新快捷方式')) {
         Remove-Item -LiteralPath $updateShortcutPath -Force
-        Write-Host "已删除桌面更新快捷方式：$updateShortcutPath"
+        Write-Host "已删除旧版桌面更新快捷方式：$updateShortcutPath"
     }
-}
-else {
-    Write-Host "桌面更新快捷方式已经不存在：$updateShortcutPath"
 }
 
 if ($state -and $state.ReplacedShortcut -and (Test-Path -LiteralPath ([string]$state.ReplacedShortcut) -PathType Leaf)) {
@@ -72,7 +66,7 @@ if ($state -and $state.ReplacedShortcut -and (Test-Path -LiteralPath ([string]$s
 if ($state -and $state.PSObject.Properties.Name -contains 'ReplacedUpdateShortcut' -and $state.ReplacedUpdateShortcut -and (Test-Path -LiteralPath ([string]$state.ReplacedUpdateShortcut) -PathType Leaf)) {
     $updateBackupFullPath = [IO.Path]::GetFullPath([string]$state.ReplacedUpdateShortcut)
     $desktopFullPath = [IO.Path]::GetFullPath($desktopPath).TrimEnd('\') + '\'
-    if (-not $updateBackupFullPath.StartsWith($desktopFullPath, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($updateBackupFullPath) -notlike "$($config.UpdateShortcutName).before-codex-proxy-*.bak") {
+    if (-not $updateBackupFullPath.StartsWith($desktopFullPath, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($updateBackupFullPath) -notlike 'Codex-Proxy 更新.lnk.before-codex-proxy-*.bak') {
         throw '安装状态中的更新快捷方式备份路径无效，已拒绝恢复。'
     }
     if ($PSCmdlet.ShouldProcess($updateShortcutPath, '恢复安装前备份的同名更新快捷方式')) {

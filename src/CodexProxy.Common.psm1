@@ -44,7 +44,7 @@ function Get-CodexProxyConfig {
         throw (New-CodexProxyException -Code 'CONFIG_NOT_FOUND' -Message "找不到配置文件：$Path" -Remediation '请重新安装或修复 Codex Proxy。')
     }
     $data = Import-PowerShellDataFile -LiteralPath $Path
-    foreach ($name in @('SchemaVersion','ProxyHost','ProxyPort','ProxyProbeHost','ProxyProbePort','ProxyConnectTimeoutSeconds','LaunchTimeoutSeconds','PackageName','ExpectedPublisherId','AppId','ShortcutName','UpdateShortcutName','ShortcutDescription','InstallPath','HelperCachePath','LogPath','LogMaxBytes','LogRetention','RequireValidSignatures','UpdateX64Uri','UpdateArm64Uri','UpdateStoreProductId','UpdateDownloadTimeoutSeconds')) {
+    foreach ($name in @('SchemaVersion','ProxyHost','ProxyPort','ProxyProbeHost','ProxyProbePort','ProxyConnectTimeoutSeconds','LaunchTimeoutSeconds','PackageName','ExpectedPublisherId','AppId','ShortcutName','ShortcutDescription','InstallPath','HelperCachePath','LogPath','LogMaxBytes','LogRetention','RequireValidSignatures','UpdateStoreProductId','UpdateAttemptTimeoutSeconds','UpdateRetryCooldownMinutes','UpdateStatePath')) {
         if (-not $data.ContainsKey($name)) {
             throw (New-CodexProxyException -Code 'CONFIG_KEY_MISSING' -Message "配置缺少必需项：$name" -Remediation '请使用当前版本的 CodexProxy.config.psd1。')
         }
@@ -76,20 +76,6 @@ function Get-CodexProxyConfig {
     if ([IO.Path]::GetFileName($shortcutName) -ne $shortcutName -or -not $shortcutName.EndsWith('.lnk', [StringComparison]::OrdinalIgnoreCase)) {
         throw (New-CodexProxyException -Code 'SHORTCUT_NAME_INVALID' -Message "ShortcutName 必须是不含目录的 .lnk 文件名：$shortcutName" -Remediation '请恢复默认快捷方式名称。')
     }
-    $updateShortcutName = [string]$data.UpdateShortcutName
-    if ([IO.Path]::GetFileName($updateShortcutName) -ne $updateShortcutName -or -not $updateShortcutName.EndsWith('.lnk', [StringComparison]::OrdinalIgnoreCase)) {
-        throw (New-CodexProxyException -Code 'UPDATE_SHORTCUT_NAME_INVALID' -Message "UpdateShortcutName 必须是不含目录的 .lnk 文件名：$updateShortcutName" -Remediation '请恢复默认快捷方式名称。')
-    }
-    $updateUris = @{}
-    foreach ($item in @(@('X64','UpdateX64Uri'), @('Arm64','UpdateArm64Uri'))) {
-        $uri = $null
-        if (-not [Uri]::TryCreate([string]$data[$item[1]], [UriKind]::Absolute, [ref]$uri) -or
-            $uri.Scheme -ne 'https' -or $uri.Host -ne 'persistent.oaistatic.com' -or
-            -not $uri.AbsolutePath.EndsWith("-$($item[0].ToLowerInvariant()).msix", [StringComparison]::OrdinalIgnoreCase)) {
-            throw (New-CodexProxyException -Code 'UPDATE_URI_INVALID' -Message "$($item[1]) 必须是 persistent.oaistatic.com 上对应架构的 HTTPS MSIX 地址。" -Remediation '请恢复默认更新地址。')
-        }
-        $updateUris[$item[0]] = $uri
-    }
     $storeProductId = ([string]$data.UpdateStoreProductId).Trim().ToUpperInvariant()
     if ($storeProductId -notmatch '^[A-Z0-9]{12}$') {
         throw (New-CodexProxyException -Code 'UPDATE_STORE_ID_INVALID' -Message "UpdateStoreProductId 格式无效：$storeProductId" -Remediation '请恢复默认 Microsoft Store 产品 ID。')
@@ -98,16 +84,18 @@ function Get-CodexProxyConfig {
     $installDirectory = Resolve-CodexProxyChildPath -Root $localAppData -RelativePath ([string]$data.InstallPath) -SettingName 'InstallPath'
     $helperCacheDirectory = Resolve-CodexProxyChildPath -Root $localAppData -RelativePath ([string]$data.HelperCachePath) -SettingName 'HelperCachePath'
     $logFilePath = Resolve-CodexProxyChildPath -Root $localAppData -RelativePath ([string]$data.LogPath) -SettingName 'LogPath'
+    $updateStateFilePath = Resolve-CodexProxyChildPath -Root $localAppData -RelativePath ([string]$data.UpdateStatePath) -SettingName 'UpdateStatePath'
     $uriBuilder = New-Object UriBuilder('http', $hostName, $port)
     [pscustomobject]@{
         SchemaVersion=[int]$data.SchemaVersion; ProxyHost=$hostName; ProxyPort=$port; ProxyUrl=$uriBuilder.Uri.AbsoluteUri.TrimEnd('/')
         ProxyProbeHost=[string]$data.ProxyProbeHost; ProxyProbePort=$probePort
         ProxyConnectTimeoutSeconds=[Math]::Max(1,[int]$data.ProxyConnectTimeoutSeconds); LaunchTimeoutSeconds=[Math]::Max(1,[int]$data.LaunchTimeoutSeconds)
         PackageName=[string]$data.PackageName; ExpectedPublisherId=[string]$data.ExpectedPublisherId; AppId=[string]$data.AppId
-        ShortcutName=$shortcutName; UpdateShortcutName=$updateShortcutName; ShortcutDescription=[string]$data.ShortcutDescription; InstallDirectory=$installDirectory
+        ShortcutName=$shortcutName; ShortcutDescription=[string]$data.ShortcutDescription; InstallDirectory=$installDirectory
         HelperCacheDirectory=$helperCacheDirectory; LogFilePath=$logFilePath; LogMaxBytes=[Math]::Max(65536,[long]$data.LogMaxBytes)
         LogRetention=[Math]::Max(1,[int]$data.LogRetention); RequireValidSignatures=[bool]$data.RequireValidSignatures
-        UpdateX64Uri=$updateUris.X64; UpdateArm64Uri=$updateUris.Arm64; UpdateStoreProductId=$storeProductId; UpdateDownloadTimeoutSeconds=[Math]::Max(60,[int]$data.UpdateDownloadTimeoutSeconds)
+        UpdateStoreProductId=$storeProductId; UpdateAttemptTimeoutSeconds=[Math]::Max(30,[int]$data.UpdateAttemptTimeoutSeconds)
+        UpdateRetryCooldownMinutes=[Math]::Max(5,[int]$data.UpdateRetryCooldownMinutes); UpdateStateFilePath=$updateStateFilePath
         UserConfigPath=if ($UserPath) { $UserPath } else { $null }
     }
 }
@@ -207,120 +195,6 @@ function Get-CodexPackageProcess {
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue|Where-Object{$_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath)).StartsWith($installRoot,[StringComparison]::OrdinalIgnoreCase)}
 }
 
-function Get-CodexUpdateUri {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$Architecture)
-    switch ($Architecture.Trim().ToUpperInvariant()) {
-        'X64' { return [Uri]$Config.UpdateX64Uri }
-        'ARM64' { return [Uri]$Config.UpdateArm64Uri }
-        default {
-            throw (New-CodexProxyException -Code 'UPDATE_ARCHITECTURE_UNSUPPORTED' -Message "Codex 更新模式暂不支持此架构：$Architecture" -Remediation '当前官方更新包仅提供 x64 和 Arm64；请使用 Microsoft Store 更新其他架构。')
-        }
-    }
-}
-
-function Read-CodexMsixIdentity {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw (New-CodexProxyException -Code 'UPDATE_PACKAGE_MISSING' -Message "找不到已下载的更新包：$Path" -Remediation '请重新运行更新模式。')
-    }
-    Add-Type -AssemblyName System.IO.Compression
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = $null
-    $reader = $null
-    try {
-        $archive = [IO.Compression.ZipFile]::OpenRead($Path)
-        $manifestEntry = $archive.GetEntry('AppxManifest.xml')
-        if (-not $manifestEntry) {
-            throw (New-CodexProxyException -Code 'UPDATE_MANIFEST_MISSING' -Message '更新包中缺少 AppxManifest.xml。' -Remediation '请删除下载文件并重试。')
-        }
-        $reader = New-Object IO.StreamReader($manifestEntry.Open(), [Text.Encoding]::UTF8, $true)
-        [xml]$manifest = $reader.ReadToEnd()
-        $identity = $manifest.Package.Identity
-        if (-not $identity -or -not $identity.Name -or -not $identity.Publisher -or -not $identity.Version -or -not $identity.ProcessorArchitecture) {
-            throw (New-CodexProxyException -Code 'UPDATE_MANIFEST_INVALID' -Message '更新包清单缺少必需的身份字段。' -Remediation '请删除下载文件并重试。')
-        }
-        [pscustomobject]@{
-            Name         = [string]$identity.Name
-            Publisher    = [string]$identity.Publisher
-            Version      = [version]([string]$identity.Version)
-            Architecture = ([string]$identity.ProcessorArchitecture).ToUpperInvariant()
-        }
-    }
-    catch {
-        if ($_.Exception.Data.Contains('CodexProxyCode')) { throw }
-        throw (New-CodexProxyException -Code 'UPDATE_PACKAGE_INVALID' -Message "无法读取更新包：$($_.Exception.Message)" -Remediation '请检查代理连接和磁盘空间，然后重新下载。')
-    }
-    finally {
-        if ($reader) { $reader.Dispose() }
-        if ($archive) { $archive.Dispose() }
-    }
-}
-
-function Test-CodexUpdateIdentity {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)]$Identity, [Parameter(Mandatory)]$InstalledPackage, [Parameter(Mandatory)]$Config)
-    $installedName = [string](Get-MapValue -Map $InstalledPackage -Name 'Name' -Default '')
-    $installedPublisher = [string](Get-MapValue -Map $InstalledPackage -Name 'Publisher' -Default '')
-    $installedPublisherId = [string](Get-MapValue -Map $InstalledPackage -Name 'PublisherId' -Default '')
-    $installedArchitecture = ([string](Get-MapValue -Map $InstalledPackage -Name 'Architecture' -Default '')).ToUpperInvariant()
-    $installedVersion = [version]([string](Get-MapValue -Map $InstalledPackage -Name 'Version' -Default '0.0.0.0'))
-    if ($installedPublisherId -ne [string]$Config.ExpectedPublisherId -or $Identity.Name -ne [string]$Config.PackageName -or $Identity.Name -ne $installedName) {
-        throw (New-CodexProxyException -Code 'UPDATE_NAME_MISMATCH' -Message "更新包身份不匹配：$($Identity.Name)" -Remediation '已拒绝安装；只允许更新当前官方 Codex 包。')
-    }
-    if ([string]::IsNullOrWhiteSpace($installedPublisher) -or -not $Identity.Publisher.Equals($installedPublisher, [StringComparison]::OrdinalIgnoreCase)) {
-        throw (New-CodexProxyException -Code 'UPDATE_PUBLISHER_MISMATCH' -Message '更新包发布者与已安装的官方 Codex 不一致。' -Remediation '已拒绝安装；请勿使用第三方 MSIX。')
-    }
-    if ($Identity.Architecture -ne $installedArchitecture) {
-        throw (New-CodexProxyException -Code 'UPDATE_ARCHITECTURE_MISMATCH' -Message "更新包架构 $($Identity.Architecture) 与已安装架构 $installedArchitecture 不一致。" -Remediation '请使用与当前 Codex 相同架构的官方更新包。')
-    }
-    [pscustomobject]@{
-        InstalledVersion = $installedVersion
-        CandidateVersion = [version]$Identity.Version
-        UpdateAvailable  = [bool]([version]$Identity.Version -gt $installedVersion)
-        Architecture     = $installedArchitecture
-    }
-}
-
-function Test-CodexUpdatePackage {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$InstalledPackage, [Parameter(Mandatory)]$Config)
-    $signature = Get-AuthenticodeSignature -LiteralPath $Path
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-        throw (New-CodexProxyException -Code 'UPDATE_SIGNATURE_INVALID' -Message "官方更新包签名验证失败：$($signature.Status)" -Remediation '已拒绝安装；请检查代理是否篡改下载，或稍后重试。')
-    }
-    $identity = Read-CodexMsixIdentity -Path $Path
-    $plan = Test-CodexUpdateIdentity -Identity $identity -InstalledPackage $InstalledPackage -Config $Config
-    [pscustomobject]@{
-        Path             = [IO.Path]::GetFullPath($Path)
-        Sha256           = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
-        Identity         = $identity
-        InstalledVersion = $plan.InstalledVersion
-        CandidateVersion = $plan.CandidateVersion
-        UpdateAvailable  = $plan.UpdateAvailable
-        Architecture     = $plan.Architecture
-    }
-}
-
-function Save-CodexUpdatePackage {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][Uri]$Uri, [Parameter(Mandatory)][string]$DestinationPath, [Parameter(Mandatory)]$Config)
-    $parent = Split-Path -Parent $DestinationPath
-    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    try {
-        Invoke-WebRequest -Uri $Uri -Proxy $Config.ProxyUrl -UseBasicParsing -OutFile $DestinationPath -TimeoutSec $Config.UpdateDownloadTimeoutSeconds
-    }
-    catch {
-        if (Test-Path -LiteralPath $DestinationPath -PathType Leaf) { Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue }
-        throw (New-CodexProxyException -Code 'UPDATE_DOWNLOAD_FAILED' -Message "通过 $($Config.ProxyUrl) 下载官方更新失败：$($_.Exception.Message)" -Remediation '请检查代理节点、剩余磁盘空间和 persistent.oaistatic.com 的访问规则。')
-    }
-    if (-not (Test-Path -LiteralPath $DestinationPath -PathType Leaf) -or (Get-Item -LiteralPath $DestinationPath).Length -le 0) {
-        throw (New-CodexProxyException -Code 'UPDATE_DOWNLOAD_EMPTY' -Message '官方更新下载完成，但文件为空。' -Remediation '请切换代理节点后重试。')
-    }
-    Get-Item -LiteralPath $DestinationPath
-}
-
 function Get-CodexReportedUpdateVersion {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Package, [string]$LogRoot)
@@ -346,7 +220,7 @@ function Get-CodexReportedUpdateVersion {
 
 function Invoke-CodexStoreUpdate {
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$InstalledPackage, [Parameter(Mandatory)]$Config, [version]$ExpectedVersion)
+    param([Parameter(Mandatory)]$InstalledPackage, [Parameter(Mandatory)]$Config)
     $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
     if (-not $winget) {
         throw (New-CodexProxyException -Code 'UPDATE_WINGET_MISSING' -Message '检测到 Store 已分配新版本，但系统找不到 winget.exe。' -Remediation '请从 Microsoft Store 安装或修复“应用安装程序”，然后重试。')
@@ -358,34 +232,131 @@ function Invoke-CodexStoreUpdate {
     $environmentNames = @('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','http_proxy','https_proxy','all_proxy')
     $previous = @{}
     foreach ($name in $environmentNames) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process'); [Environment]::SetEnvironmentVariable($name, $Config.ProxyUrl, 'Process') }
+    $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ('codex-proxy-winget-' + [guid]::NewGuid().ToString('N') + '.stdout.log')
+    $stderrPath = Join-Path ([IO.Path]::GetTempPath()) ('codex-proxy-winget-' + [guid]::NewGuid().ToString('N') + '.stderr.log')
     try {
         $arguments = @('install','--id',$Config.UpdateStoreProductId,'--source','msstore','--architecture',$architecture,'--accept-package-agreements','--accept-source-agreements','--disable-interactivity')
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = 'Continue'
-            $output = @(& $winget.Source @arguments 2>&1 | ForEach-Object { $_.ToString() })
-            $wingetExitCode = $LASTEXITCODE
+        $process = Start-Process -FilePath $winget.Source -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        if (-not $process.WaitForExit($Config.UpdateAttemptTimeoutSeconds * 1000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw (New-CodexProxyException -Code 'UPDATE_STORE_TIMEOUT' -Message "winget Store 更新超过 $($Config.UpdateAttemptTimeoutSeconds) 秒，已停止等待。" -Remediation '启动器会继续打开当前版本并稍后自动重试。')
         }
-        finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
+        $output = @()
+        if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) { $output += @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue) }
+        if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { $output += @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue) }
+        $wingetExitCode = $process.ExitCode
         if ($wingetExitCode -ne 0) {
             $detail = ($output | Select-Object -Last 12) -join ' | '
-            throw (New-CodexProxyException -Code 'UPDATE_STORE_FAILED' -Message "winget Store 更新失败（退出码 $wingetExitCode）：$detail" -Remediation '请开启代理客户端的 TUN 模式后重试，或等待官方稳定 MSIX 地址完成发布。')
+            throw (New-CodexProxyException -Code 'UPDATE_STORE_FAILED' -Message "winget Store 更新失败（退出码 $wingetExitCode）：$detail" -Remediation '启动器会继续打开当前版本并稍后自动重试；必要时请开启代理客户端的 TUN 模式。')
         }
     }
     finally {
         foreach ($name in $environmentNames) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
+        foreach ($path in @($stdoutPath,$stderrPath)) { if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } }
     }
     $installedVersion = [version]([string](Get-MapValue -Map $InstalledPackage -Name 'Version' -Default '0.0.0.0'))
-    $deadline = [DateTime]::UtcNow.AddSeconds(60)
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
     $updatedPackage = $null
     do {
         $updatedPackage = Get-CodexPackage -Config $Config
         if ($updatedPackage -and [version]$updatedPackage.Version -gt $installedVersion) { return $updatedPackage }
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw (New-CodexProxyException -Code 'UPDATE_STORE_NOT_APPLIED' -Message 'winget 已完成，但 Codex 包版本没有变化。' -Remediation '请开启代理客户端的 TUN 模式后重试；如果仍失败，请等待官方稳定 MSIX 地址更新。')
+    throw (New-CodexProxyException -Code 'UPDATE_STORE_NOT_APPLIED' -Message 'winget 已完成，但 Codex 包版本没有变化。' -Remediation '启动器会继续打开当前版本并稍后自动重试；必要时请开启代理客户端的 TUN 模式。')
+}
+
+function Read-CodexUpdateState {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    try { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json }
+    catch { return $null }
+}
+
+function Write-CodexUpdateState {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$State)
+    $directory = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+    $temporary = "$Path.writing-$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $State | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporary -Encoding UTF8
+        Move-Item -LiteralPath $temporary -Destination $Path -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Get-CodexAutoUpdateDecision {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][version]$InstalledVersion,
+        [AllowNull()][version]$ReportedVersion,
+        $State,
+        [Parameter(Mandatory)][int]$RetryCooldownMinutes,
+        [datetime]$NowUtc = [DateTime]::UtcNow
+    )
+    if (-not $ReportedVersion -or $ReportedVersion -le $InstalledVersion) {
+        return [pscustomobject]@{ShouldAttempt=$false;Reason='NoUpdate';RetryAfterUtc=$null}
+    }
+    if ($State) {
+        $stateTarget = [string](Get-MapValue -Map $State -Name 'TargetVersion' -Default '')
+        $stateOutcome = [string](Get-MapValue -Map $State -Name 'Outcome' -Default '')
+        $lastAttemptText = [string](Get-MapValue -Map $State -Name 'LastAttemptUtc' -Default '')
+        $lastAttemptUtc = [datetime]::MinValue
+        if ($stateTarget -eq $ReportedVersion.ToString() -and $stateOutcome -eq 'Failed' -and [datetime]::TryParse($lastAttemptText, [ref]$lastAttemptUtc)) {
+            $retryAfterUtc = $lastAttemptUtc.ToUniversalTime().AddMinutes([Math]::Max(5, $RetryCooldownMinutes))
+            if ($retryAfterUtc -gt $NowUtc.ToUniversalTime()) {
+                return [pscustomobject]@{ShouldAttempt=$false;Reason='Cooldown';RetryAfterUtc=$retryAfterUtc}
+            }
+        }
+    }
+    [pscustomobject]@{ShouldAttempt=$true;Reason='UpdateAvailable';RetryAfterUtc=$null}
+}
+
+function Invoke-CodexAutomaticUpdate {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$InstalledPackage, [Parameter(Mandatory)]$Config)
+    $installedVersion = [version]([string](Get-MapValue -Map $InstalledPackage -Name 'Version' -Default '0.0.0.0'))
+    $reportedVersion = Get-CodexReportedUpdateVersion -Package $InstalledPackage
+    $state = Read-CodexUpdateState -Path $Config.UpdateStateFilePath
+    $decision = Get-CodexAutoUpdateDecision -InstalledVersion $installedVersion -ReportedVersion $reportedVersion -State $state -RetryCooldownMinutes $Config.UpdateRetryCooldownMinutes
+    if (-not $decision.ShouldAttempt) {
+        return [pscustomobject]@{
+            Attempted=$false; Updated=$false; Reason=$decision.Reason; Package=$InstalledPackage
+            InstalledVersion=$installedVersion; TargetVersion=$reportedVersion; RetryAfterUtc=$decision.RetryAfterUtc; Code=$null; Message=$null
+        }
+    }
+    try {
+        $updatedPackage = Invoke-CodexStoreUpdate -InstalledPackage $InstalledPackage -Config $Config
+        try {
+            Write-CodexUpdateState -Path $Config.UpdateStateFilePath -State ([pscustomobject]@{
+                SchemaVersion=1; TargetVersion=$reportedVersion.ToString(); InstalledVersion=[string]$updatedPackage.Version
+                Outcome='Succeeded'; LastAttemptUtc=[DateTime]::UtcNow.ToString('o'); ErrorCode=$null; ErrorMessage=$null
+            })
+        } catch {}
+        return [pscustomobject]@{
+            Attempted=$true; Updated=$true; Reason='Updated'; Package=$updatedPackage
+            InstalledVersion=[version]$updatedPackage.Version; TargetVersion=$reportedVersion; RetryAfterUtc=$null; Code=$null; Message=$null
+        }
+    }
+    catch {
+        $info = Get-CodexProxyExceptionInfo -Exception $_.Exception
+        $message = if ($info.Message.Length -gt 2000) { $info.Message.Substring(0, 2000) } else { $info.Message }
+        $attemptedAtUtc = [DateTime]::UtcNow
+        try {
+            Write-CodexUpdateState -Path $Config.UpdateStateFilePath -State ([pscustomobject]@{
+                SchemaVersion=1; TargetVersion=$reportedVersion.ToString(); InstalledVersion=$installedVersion.ToString()
+                Outcome='Failed'; LastAttemptUtc=$attemptedAtUtc.ToString('o'); ErrorCode=$info.Code; ErrorMessage=$message
+            })
+        } catch {}
+        return [pscustomobject]@{
+            Attempted=$true; Updated=$false; Reason='Failed'; Package=$InstalledPackage
+            InstalledVersion=$installedVersion; TargetVersion=$reportedVersion
+            RetryAfterUtc=$attemptedAtUtc.AddMinutes($Config.UpdateRetryCooldownMinutes); Code=$info.Code; Message=$message
+        }
+    }
 }
 
 function Get-CodexApplicationInfo {
@@ -528,4 +499,4 @@ function Wait-CodexPackageProcess {
     @()
 }
 
-Export-ModuleMember -Function @('Get-CodexProxyConfig','Get-CodexProxyExceptionInfo','Write-CodexProxyLog','Show-CodexProxyError','Get-CodexProxyListener','Test-CodexProxyEndpoint','Get-CodexPackage','Get-CodexPackageProcess','Get-CodexUpdateUri','Read-CodexMsixIdentity','Test-CodexUpdateIdentity','Test-CodexUpdatePackage','Save-CodexUpdatePackage','Get-CodexReportedUpdateVersion','Invoke-CodexStoreUpdate','Get-CodexApplicationInfo','Sync-CodexHelpers','New-CodexProxyInnerScript','Get-CodexProxyStatus','Get-CodexProxyShortcutArguments','Test-CodexProxyShortcut','Enter-CodexProxyLaunchLock','Wait-CodexPackageProcess')
+Export-ModuleMember -Function @('Get-CodexProxyConfig','Get-CodexProxyExceptionInfo','Write-CodexProxyLog','Show-CodexProxyError','Get-CodexProxyListener','Test-CodexProxyEndpoint','Get-CodexPackage','Get-CodexPackageProcess','Get-CodexReportedUpdateVersion','Invoke-CodexStoreUpdate','Read-CodexUpdateState','Write-CodexUpdateState','Get-CodexAutoUpdateDecision','Invoke-CodexAutomaticUpdate','Get-CodexApplicationInfo','Sync-CodexHelpers','New-CodexProxyInnerScript','Get-CodexProxyStatus','Get-CodexProxyShortcutArguments','Test-CodexProxyShortcut','Enter-CodexProxyLaunchLock','Wait-CodexPackageProcess')

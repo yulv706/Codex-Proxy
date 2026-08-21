@@ -1,6 +1,6 @@
 # Codex Proxy
 
-Codex Proxy 是面向 OpenAI Codex Windows Desktop 的本地代理启动器和安全更新辅助工具。它只给通过本项目启动的 Codex 进程树和显式更新下载使用代理，不修改 Windows 系统代理，也不写入用户级或机器级代理环境变量。
+Codex Proxy 是面向 OpenAI Codex Windows Desktop 的本地代理启动器。代理启动、官方包更新检测和 helper 同步都集成在同一个入口中；它不修改 Windows 系统代理，也不写入用户级或机器级代理环境变量。
 
 默认代理地址为 `http://127.0.0.1:7891`，用户可以在安装、启动或诊断时指定其他本地端口。
 
@@ -35,7 +35,7 @@ powershell.exe -NoLogo -NoProfile -File ".\Install-CodexProxy.ps1" -ProxyPort 78
 powershell.exe -NoLogo -NoProfile -File ".\Install-CodexProxy.ps1" -Portable -ProxyPort 7891
 ```
 
-安装器会创建 `Codex-Proxy` 和 `Codex-Proxy 更新` 两个桌面快捷方式。它不会静默覆盖不属于本项目的同名快捷方式；确认需要替换时才使用 `-ForceShortcutReplacement`，原快捷方式会被备份，并在卸载时恢复。
+安装器只创建一个 `Codex-Proxy` 桌面快捷方式。它不会静默覆盖不属于本项目的同名快捷方式；确认需要替换时才使用 `-ForceShortcutReplacement`，原快捷方式会被备份，并在卸载时恢复。升级自 2.1.0 时，安装器会自动移除旧的独立更新脚本和更新快捷方式。
 
 ## 使用
 
@@ -57,32 +57,13 @@ powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Start-Code
 
 端口优先级为：命令行 `-ProxyPort` > `CodexProxy.user.psd1` > 默认值 `7891`。
 
-## 更新模式
+## 内置自动更新
 
-当应用内更新一直显示“待更新”或 Microsoft Store 下载超时时：
+用户仍然只需双击 `Codex-Proxy`。启动器会读取 Codex 桌面日志中已经检测到的 Microsoft Store 清单版本；只有目标版本高于当前安装版本时，才通过官方 Store 产品 ID 调用 `winget`，并仅为该子进程注入本地代理变量。
 
-1. 保存所有正在进行的 Codex 任务，并从系统托盘完全退出 Codex。
-2. 确保本地 HTTP/Mixed 代理正在运行。
-3. 双击桌面的 `Codex-Proxy 更新`。
+更新成功后，启动器会重新发现 AppX 包、验证官方应用文件签名、原子同步所有 `codex*.exe` helper，然后直接启动新版本。更新失败不会阻止工作：启动器把稳定错误码写入 `update-state.json` 和 `launcher.log`，继续打开当前版本，并在默认 6 小时冷却期后自动重试。冷却避免每次启动都重复等待网络失败，整个流程没有额外快捷方式、弹窗或手动命令。
 
-更新模式会先读取 Codex 自己记录的 Store 清单版本。如果 Store 已为当前设备分配了新版本，它优先调用官方文档支持的 `winget` Microsoft Store 产品 ID，并只在该子进程中注入代理变量；否则从 OpenAI 官方的 `persistent.oaistatic.com` 稳定地址下载与当前安装架构匹配的 Store 签名 MSIX。这样既能处理分阶段 Store 发布，也能在 Store 通道不可用时使用官方稳定包回退。
-
-直接 MSIX 安装前会依次验证数字签名、包名、发布者、处理器架构和版本。仅当候选版本高于已安装版本时才执行 `Add-AppxPackage`；成功后重新发现 AppX 包并原子同步所有 `codex*.exe` helper。临时下载无论成功或失败都会清理，更新模式也不会修改 WinHTTP、系统代理或永久环境变量。如果 Store 已分配的版本尚未进入稳定 MSIX，且 `winget` 仍因系统网络策略失败，程序会明确报告两个通道的状态，不会把旧稳定包误报为“最新”。
-
-也可以从命令行运行：
-
-```powershell
-powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Update-CodexProxy.ps1"
-powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Start-CodexProxy.ps1" -Update
-```
-
-如需更新后立即启动 Codex：
-
-```powershell
-powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Update-CodexProxy.ps1" -LaunchAfterUpdate
-```
-
-官方 Windows 部署说明：<https://learn.chatgpt.com/docs/enterprise/windows-deployment>。
+自动更新不修改 WinHTTP、系统代理或永久环境变量。如果 Microsoft Store 后端仍忽略进程代理，可以开启代理客户端的 TUN 模式；Codex Proxy 会在下一次冷却期结束后自行重试。官方 Windows 命令行安装方式和 Store 产品 ID 参考：<https://learn.chatgpt.com/docs/enterprise/windows-deployment>。
 
 ## helper 缓存
 
@@ -137,12 +118,11 @@ powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Uninstall-
 powershell.exe -NoLogo -NoProfile -File ".\tests\Run-Tests.ps1"
 ```
 
-测试覆盖配置优先级与验证、启动锁、日志轮转、内部脚本解析、helper 原子刷新、损坏修复、旧文件清理、最低必需集合，以及更新地址约束、架构选择、MSIX 身份解析、版本规划和签名拒绝。GitHub Actions 会在 Windows PowerShell 5.1 下运行同一测试入口。
+测试覆盖配置优先级与验证、启动锁、日志轮转、内部脚本解析、helper 原子刷新、损坏修复、旧文件清理、最低必需集合，以及自动更新发现、冷却决策、状态原子写入和单入口约束。GitHub Actions 会在 Windows PowerShell 5.1 下运行同一测试入口。
 
 ## 项目结构
 
 - `Start-CodexProxy.ps1`：统一启动入口。
-- `Update-CodexProxy.ps1`：通过本地代理下载、验证、安装官方更新并同步 helper。
 - `Test-CodexProxy.ps1`：只读诊断和显式修复入口。
 - `Install-CodexProxy.ps1`：稳定安装、升级和快捷方式修复。
 - `Uninstall-CodexProxy.ps1`：验证安装身份后卸载。
