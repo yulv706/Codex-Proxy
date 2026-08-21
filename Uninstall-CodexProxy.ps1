@@ -17,12 +17,16 @@ $installRoot = if ($Portable) { $invocationRoot } else { $config.InstallDirector
 $statePath = Join-Path $installRoot 'install-state.json'
 $state = if (Test-Path -LiteralPath $statePath -PathType Leaf) { Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } else { $null }
 $launcherPath = Join-Path $installRoot 'Start-CodexProxy.ps1'
+$updateLauncherPath = Join-Path $installRoot 'Update-CodexProxy.ps1'
 $desktopPath = [Environment]::GetFolderPath('Desktop')
 $shortcutPath = Join-Path $desktopPath $config.ShortcutName
+$updateShortcutPath = Join-Path $desktopPath $config.UpdateShortcutName
 if ($state) {
     if ([IO.Path]::GetFullPath([string]$state.InstallRoot).TrimEnd('\') -ne [IO.Path]::GetFullPath($installRoot).TrimEnd('\')) { throw '安装状态中的安装目录与当前目标不一致，已拒绝卸载。' }
     if ([IO.Path]::GetFullPath([string]$state.LauncherPath) -ne [IO.Path]::GetFullPath($launcherPath)) { throw '安装状态中的启动器路径无效，已拒绝卸载。' }
     if ([IO.Path]::GetFullPath([string]$state.ShortcutPath) -ne [IO.Path]::GetFullPath($shortcutPath)) { throw '安装状态中的快捷方式路径无效，已拒绝卸载。' }
+    if ($state.PSObject.Properties.Name -contains 'UpdateLauncherPath' -and [IO.Path]::GetFullPath([string]$state.UpdateLauncherPath) -ne [IO.Path]::GetFullPath($updateLauncherPath)) { throw '安装状态中的更新器路径无效，已拒绝卸载。' }
+    if ($state.PSObject.Properties.Name -contains 'UpdateShortcutPath' -and [IO.Path]::GetFullPath([string]$state.UpdateShortcutPath) -ne [IO.Path]::GetFullPath($updateShortcutPath)) { throw '安装状态中的更新快捷方式路径无效，已拒绝卸载。' }
 }
 
 if (Test-Path -LiteralPath $shortcutPath -PathType Leaf) {
@@ -39,6 +43,20 @@ else {
     Write-Host "桌面快捷方式已经不存在：$shortcutPath"
 }
 
+if (Test-Path -LiteralPath $updateShortcutPath -PathType Leaf) {
+    $updateShortcutStatus = Test-CodexProxyShortcut -Path $updateShortcutPath -LauncherPath $updateLauncherPath
+    if (-not $updateShortcutStatus.Ready) {
+        throw '桌面更新快捷方式与安装记录不匹配，因此没有删除。请先运行安装脚本修复，或手动确认快捷方式归属。'
+    }
+    if ($PSCmdlet.ShouldProcess($updateShortcutPath, '删除 Codex Proxy 更新快捷方式')) {
+        Remove-Item -LiteralPath $updateShortcutPath -Force
+        Write-Host "已删除桌面更新快捷方式：$updateShortcutPath"
+    }
+}
+else {
+    Write-Host "桌面更新快捷方式已经不存在：$updateShortcutPath"
+}
+
 if ($state -and $state.ReplacedShortcut -and (Test-Path -LiteralPath ([string]$state.ReplacedShortcut) -PathType Leaf)) {
     $backupFullPath = [IO.Path]::GetFullPath([string]$state.ReplacedShortcut)
     $desktopFullPath = [IO.Path]::GetFullPath($desktopPath).TrimEnd('\') + '\'
@@ -48,6 +66,18 @@ if ($state -and $state.ReplacedShortcut -and (Test-Path -LiteralPath ([string]$s
     if ($PSCmdlet.ShouldProcess($shortcutPath, '恢复安装前备份的同名快捷方式')) {
         Move-Item -LiteralPath $backupFullPath -Destination $shortcutPath
         Write-Host "已恢复安装前的快捷方式：$shortcutPath"
+    }
+}
+
+if ($state -and $state.PSObject.Properties.Name -contains 'ReplacedUpdateShortcut' -and $state.ReplacedUpdateShortcut -and (Test-Path -LiteralPath ([string]$state.ReplacedUpdateShortcut) -PathType Leaf)) {
+    $updateBackupFullPath = [IO.Path]::GetFullPath([string]$state.ReplacedUpdateShortcut)
+    $desktopFullPath = [IO.Path]::GetFullPath($desktopPath).TrimEnd('\') + '\'
+    if (-not $updateBackupFullPath.StartsWith($desktopFullPath, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($updateBackupFullPath) -notlike "$($config.UpdateShortcutName).before-codex-proxy-*.bak") {
+        throw '安装状态中的更新快捷方式备份路径无效，已拒绝恢复。'
+    }
+    if ($PSCmdlet.ShouldProcess($updateShortcutPath, '恢复安装前备份的同名更新快捷方式')) {
+        Move-Item -LiteralPath $updateBackupFullPath -Destination $updateShortcutPath
+        Write-Host "已恢复安装前的更新快捷方式：$updateShortcutPath"
     }
 }
 

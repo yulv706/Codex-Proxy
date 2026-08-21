@@ -1,7 +1,8 @@
 ﻿[CmdletBinding()]
 param(
     [ValidateRange(1, 65535)][int]$ProxyPort,
-    [switch]$NoUI
+    [switch]$NoUI,
+    [switch]$Update
 )
 
 Set-StrictMode -Version Latest
@@ -15,6 +16,16 @@ $fallbackLogPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData
 $config = $null
 $launchLock = $null
 $runId = [guid]::NewGuid().ToString('N').Substring(0, 8)
+
+if ($Update) {
+    $updatePath = Join-Path $projectRoot 'Update-CodexProxy.ps1'
+    if (-not (Test-Path -LiteralPath $updatePath -PathType Leaf)) { throw "找不到更新模式脚本：$updatePath" }
+    $updateArguments = @{}
+    if ($PSBoundParameters.ContainsKey('ProxyPort')) { $updateArguments.ProxyPort = $ProxyPort }
+    if ($NoUI) { $updateArguments.NoUI = $true }
+    & $updatePath @updateArguments
+    exit $LASTEXITCODE
+}
 
 try {
     if ($PSVersionTable.PSEdition -ne 'Desktop') {

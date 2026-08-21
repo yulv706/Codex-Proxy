@@ -14,6 +14,7 @@ $modulePath = Join-Path $projectRoot 'src\CodexProxy.Common.psm1'
 $configPath = Join-Path $projectRoot 'CodexProxy.config.psd1'
 $userConfigPath = Join-Path $projectRoot 'CodexProxy.user.psd1'
 $launcherPath = Join-Path $projectRoot 'Start-CodexProxy.ps1'
+$updateLauncherPath = Join-Path $projectRoot 'Update-CodexProxy.ps1'
 $installerPath = Join-Path $projectRoot 'Install-CodexProxy.ps1'
 $iconPath = Join-Path $projectRoot 'assets\codex-official-transparent.ico'
 
@@ -53,6 +54,8 @@ try {
     $desktopPath = [Environment]::GetFolderPath('Desktop')
     $shortcutPath = Join-Path $desktopPath $config.ShortcutName
     $shortcut = Test-CodexProxyShortcut -Path $shortcutPath -LauncherPath $launcherPath
+    $updateShortcutPath = Join-Path $desktopPath $config.UpdateShortcutName
+    $updateShortcut = Test-CodexProxyShortcut -Path $updateShortcutPath -LauncherPath $updateLauncherPath
 
     $result = [pscustomobject]@{
         SchemaVersion               = 2
@@ -68,11 +71,14 @@ try {
         CodexRunningProcessCount    = $status.RunningProcesses.Count
         AppxLaunchCommandAvailable  = $status.InvokeCommandAvailable
         LauncherPresent             = Test-Path -LiteralPath $launcherPath -PathType Leaf
+        UpdateLauncherPresent       = Test-Path -LiteralPath $updateLauncherPath -PathType Leaf
         IconPresent                 = Test-Path -LiteralPath $iconPath -PathType Leaf
         DesktopShortcut             = $shortcutPath
         DesktopShortcutReady        = $shortcut.Ready
         DesktopShortcutTarget       = $shortcut.TargetPath
         DesktopShortcutArguments    = $shortcut.Arguments
+        UpdateDesktopShortcut       = $updateShortcutPath
+        UpdateDesktopShortcutReady  = $updateShortcut.Ready
         ReadyToLaunchNow            = [bool]($status.ReadyNow -and $shortcut.Ready)
         ReadyToLaunchAfterCodexExit = [bool]($status.ReadyAfterCodexExit -and $shortcut.Ready)
         BlockingCode                = if ($status.BlockingCode -and $status.BlockingCode -ne 'CODEX_ALREADY_RUNNING') { $status.BlockingCode } elseif (-not $shortcut.Ready) { $shortcut.Code } else { $status.BlockingCode }
