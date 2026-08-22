@@ -14,9 +14,8 @@ try {
     Import-Module -Name $modulePath -Force
     $config = Get-CodexProxyConfig -Path $configPath
 
-    if ($config.UpdateStoreProductId -ne '9PLM9XGG6VKS') { throw 'The official Microsoft Store product ID is incorrect.' }
-    if ($config.UpdateAttemptTimeoutSeconds -ne 120) { throw 'The bounded automatic update timeout is incorrect.' }
-    if ($config.UpdateRetryCooldownMinutes -ne 360) { throw 'The automatic update retry cooldown is incorrect.' }
+    if ($config.UpdateActivationWaitSeconds -ne 20) { throw 'The bounded package activation wait is incorrect.' }
+    if ($config.PSObject.Properties.Name -contains 'UpdateRetryCooldownMinutes') { throw 'The obsolete winget retry cooldown should not remain in the runtime configuration.' }
     if ([IO.Path]::GetFileName($config.UpdateStateFilePath) -ne 'update-state.json') { throw 'The update state path is incorrect.' }
 
     $badConfigPath = Join-Path $testRoot 'BadUpdateState.config.psd1'
@@ -33,45 +32,61 @@ try {
     $logRoot = Join-Path $testRoot 'logs'
     New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $logRoot 'desktop.log') -Encoding UTF8 -Value @(
-        '[windows-store-updater] Checking Windows Store for package updates buildVersion=26.818.2441.0 manifestBuildVersion=26.818.3000.0 packageIdentity=OpenAI.Codex',
-        '[windows-store-updater] Checking Windows Store for package updates buildVersion=26.818.2441.0 manifestBuildVersion=26.818.3698.0 packageIdentity=OpenAI.Codex'
+        '[windows-store-updater] Checking Windows Store for package updates buildVersion=26.818.3698.0 manifestBuildVersion=26.818.5000.0 packageIdentity=OpenAI.Codex',
+        '[windows-store-updater] Checking Windows Store for package updates buildVersion=26.818.3698.0 manifestBuildVersion=26.818.5229.0 packageIdentity=OpenAI.Codex',
+        '[windows-store-updater] Windows Store package update check completed canSilentlyDownload=true completed=true hasUpdate=true overallState=Completed',
+        '[sparkle] Production Sparkle update event action=download_completed result=succeeded'
     )
     $reportedVersion = Get-CodexReportedUpdateVersion -Package ([pscustomobject]@{PackageFamilyName='fixture'}) -LogRoot $logRoot
-    if ($reportedVersion -ne [version]'26.818.3698.0') { throw 'The newest Store manifest version was not discovered from desktop logs.' }
+    if ($reportedVersion -ne [version]'26.818.5229.0') { throw 'The newest Store manifest version was not discovered from desktop logs.' }
 
-    $now = [datetime]'2026-08-21T06:00:00Z'
-    $available = Get-CodexAutoUpdateDecision -InstalledVersion ([version]'26.818.2441.0') -ReportedVersion $reportedVersion -RetryCooldownMinutes 360 -NowUtc $now
-    if (-not $available.ShouldAttempt -or $available.Reason -ne 'UpdateAvailable') { throw 'A newer Store version should trigger an automatic update.' }
-
-    $noUpdate = Get-CodexAutoUpdateDecision -InstalledVersion $reportedVersion -ReportedVersion $reportedVersion -RetryCooldownMinutes 360 -NowUtc $now
-    if ($noUpdate.ShouldAttempt -or $noUpdate.Reason -ne 'NoUpdate') { throw 'The installed Store version should not trigger an update.' }
-
-    $failedState = [pscustomobject]@{
-        TargetVersion = $reportedVersion.ToString()
-        Outcome        = 'Failed'
-        LastAttemptUtc = $now.AddMinutes(-30).ToString('o')
-    }
-    $cooldown = Get-CodexAutoUpdateDecision -InstalledVersion ([version]'26.818.2441.0') -ReportedVersion $reportedVersion -State $failedState -RetryCooldownMinutes 360 -NowUtc $now
-    if ($cooldown.ShouldAttempt -or $cooldown.Reason -ne 'Cooldown' -or $cooldown.RetryAfterUtc.ToUniversalTime() -ne $now.AddMinutes(330).ToUniversalTime()) {
-        throw 'A recent failure should defer another automatic update attempt.'
+    $oldPackage = [pscustomobject]@{ Version=[version]'26.818.3698.0' }
+    $newPackage = [pscustomobject]@{ Version=[version]'26.818.5229.0' }
+    $packages = New-Object Collections.Queue
+    $packages.Enqueue($oldPackage)
+    $packages.Enqueue($newPackage)
+    $activation = Wait-CodexPackageActivation -InstalledPackage $oldPackage -TargetVersion $reportedVersion -TimeoutSeconds 1 -PollIntervalMilliseconds 250 -PackageResolver {
+        if ($packages.Count -gt 0) { return $packages.Dequeue() }
+        $newPackage
+    } -SleepAction { param($Milliseconds) }
+    if (-not $activation.Activated -or $activation.Package.Version -ne $reportedVersion) {
+        throw 'A Store package activated during the bounded wait should be detected.'
     }
 
-    $expiredState = [pscustomobject]@{
-        TargetVersion = $reportedVersion.ToString()
-        Outcome        = 'Failed'
-        LastAttemptUtc = $now.AddMinutes(-361).ToString('o')
+    $deferredStatePath = Join-Path $testRoot 'deferred\update-state.json'
+    $deferredConfig = [pscustomobject]@{ UpdateActivationWaitSeconds=1; UpdateStateFilePath=$deferredStatePath }
+    $deferred = Invoke-CodexAutomaticUpdate -InstalledPackage $oldPackage -Config $deferredConfig -ReportedVersionOverride $reportedVersion -PackageResolver { $oldPackage } -SleepAction { param($Milliseconds) }
+    if ($deferred.Updated -or $deferred.Reason -ne 'AwaitingAppUpdater' -or $deferred.Code) {
+        throw 'An update that has not activated yet should be deferred without being classified as a failure.'
     }
-    $retry = Get-CodexAutoUpdateDecision -InstalledVersion ([version]'26.818.2441.0') -ReportedVersion $reportedVersion -State $expiredState -RetryCooldownMinutes 360 -NowUtc $now
-    if (-not $retry.ShouldAttempt) { throw 'An expired cooldown should allow another automatic update attempt.' }
+    $deferredState = Read-CodexUpdateState -Path $deferredStatePath
+    if ($deferredState.Outcome -ne 'AwaitingAppUpdater' -or $deferredState.TargetVersion -ne $reportedVersion.ToString()) {
+        throw 'The deferred built-in updater state was not persisted.'
+    }
+
+    $reconciledStatePath = Join-Path $testRoot 'reconciled\update-state.json'
+    Write-CodexUpdateState -Path $reconciledStatePath -State ([pscustomobject]@{
+        SchemaVersion=1; TargetVersion='26.818.3698.0'; InstalledVersion='26.818.2441.0'; Outcome='Failed'
+        LastAttemptUtc='2026-08-21T08:40:11Z'; ErrorCode='UPDATE_STORE_FAILED'; ErrorMessage='legacy winget failure'
+    })
+    $reconciledConfig = [pscustomobject]@{ UpdateActivationWaitSeconds=1; UpdateStateFilePath=$reconciledStatePath }
+    $reconciled = Invoke-CodexAutomaticUpdate -InstalledPackage $oldPackage -Config $reconciledConfig -ReportedVersionOverride ([version]'26.818.3698.0') -PackageResolver { $oldPackage } -SleepAction { param($Milliseconds) }
+    $reconciledState = Read-CodexUpdateState -Path $reconciledStatePath
+    if ($reconciled.Reason -ne 'Current' -or $reconciledState.Outcome -ne 'Succeeded' -or $reconciledState.ErrorCode) {
+        throw 'A stale failure should be reconciled after the target version is installed.'
+    }
+
+    $moduleText = Get-Content -LiteralPath $modulePath -Raw
+    if ($moduleText -match '(?i)winget(?:\.exe)?') { throw 'The launcher should not use winget as a Store update executor.' }
 
     $statePath = Join-Path $testRoot 'state\update-state.json'
     $state = [pscustomobject]@{
-        SchemaVersion=1; TargetVersion=$reportedVersion.ToString(); InstalledVersion='26.818.2441.0'
-        Outcome='Failed'; LastAttemptUtc=$now.ToString('o'); ErrorCode='UPDATE_STORE_FAILED'; ErrorMessage='fixture'
+        SchemaVersion=2; TargetVersion=$reportedVersion.ToString(); InstalledVersion='26.818.3698.0'
+        Outcome='AwaitingAppUpdater'; LastCheckedUtc='2026-08-22T03:16:34Z'; ErrorCode=$null; ErrorMessage=$null
     }
     Write-CodexUpdateState -Path $statePath -State $state
     $roundTrip = Read-CodexUpdateState -Path $statePath
-    if ($roundTrip.TargetVersion -ne $reportedVersion.ToString() -or $roundTrip.ErrorCode -ne 'UPDATE_STORE_FAILED') {
+    if ($roundTrip.TargetVersion -ne $reportedVersion.ToString() -or $roundTrip.Outcome -ne 'AwaitingAppUpdater') {
         throw 'The automatic update state did not survive an atomic write/read round trip.'
     }
     if (@(Get-ChildItem -LiteralPath (Split-Path -Parent $statePath) -Filter '*.tmp' -File).Count -ne 0) {
@@ -83,7 +98,7 @@ try {
     if (Test-Path -LiteralPath (Join-Path $projectRoot 'Update-CodexProxy.ps1')) { throw 'The standalone update program should not exist.' }
     if ((Get-Content -LiteralPath (Join-Path $projectRoot 'Start-CodexProxy.ps1') -Raw) -match '\[switch\]\$Update') { throw 'The launcher should not expose a separate update mode.' }
 
-    Write-Host 'PASS: automatic update discovery, cooldown decisions, atomic state, and single-entry integration.' -ForegroundColor Green
+    Write-Host 'PASS: built-in updater discovery, activation waiting, deferred state, reconciliation, and single-entry integration.' -ForegroundColor Green
 }
 finally {
     if (Test-Path -LiteralPath $testRoot -PathType Container) {

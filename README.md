@@ -59,11 +59,13 @@ powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Start-Code
 
 ## 内置自动更新
 
-用户仍然只需双击 `Codex-Proxy`。启动器会读取 Codex 桌面日志中已经检测到的 Microsoft Store 清单版本；只有目标版本高于当前安装版本时，才通过官方 Store 产品 ID 调用 `winget`，并仅为该子进程注入本地代理变量。
+用户仍然只需双击 `Codex-Proxy`。Codex 官方内置更新器会在应用运行期间检查、下载并暂存 Microsoft Store 更新；启动器读取桌面日志中已经检测到的清单版本，并在每次启动前短暂等待 Windows 完成已暂存包的版本切换。
 
-更新成功后，启动器会重新发现 AppX 包、验证官方应用文件签名、原子同步所有 `codex*.exe` helper，然后直接启动新版本。更新失败不会阻止工作：启动器把稳定错误码写入 `update-state.json` 和 `launcher.log`，继续打开当前版本，并在默认 6 小时冷却期后自动重试。冷却避免每次启动都重复等待网络失败，整个流程没有额外快捷方式、弹窗或手动命令。
+更新完成后，启动器会重新发现 AppX 包、验证官方应用文件签名、原子同步所有 `codex*.exe` helper，然后直接启动新版本。如果 Windows 尚未完成切换，启动器会把状态记录为 `AwaitingAppUpdater`，继续打开当前版本，让官方内置更新器继续下载或暂存；用户下次完全退出 Codex 并再次使用同一个快捷方式时即可应用。整个流程没有额外快捷方式、弹窗或手动更新命令。
 
-自动更新不修改 WinHTTP、系统代理或永久环境变量。如果 Microsoft Store 后端仍忽略进程代理，可以开启代理客户端的 TUN 模式；Codex Proxy 会在下一次冷却期结束后自行重试。官方 Windows 命令行安装方式和 Store 产品 ID 参考：<https://learn.chatgpt.com/docs/enterprise/windows-deployment>。
+更新协调器不再调用 `winget` 判断已安装 Store 包是否可升级，因为 Store 清单可能把版本报告为 `Unknown`，从而在官方内置更新器已经发现新版时仍返回“没有适用的更新”。旧版留下的失败状态会在系统包达到目标版本后自动纠正为成功。
+
+自动更新不修改 WinHTTP、系统代理或永久环境变量。官方 Windows 安装、Store 分发和内置自动更新说明参考：<https://learn.chatgpt.com/docs/enterprise/windows-deployment>。
 
 ## helper 缓存
 
@@ -118,7 +120,7 @@ powershell.exe -NoLogo -NoProfile -File "$env:LOCALAPPDATA\CodexProxy\Uninstall-
 powershell.exe -NoLogo -NoProfile -File ".\tests\Run-Tests.ps1"
 ```
 
-测试覆盖配置优先级与验证、启动锁、日志轮转、内部脚本解析、helper 原子刷新、损坏修复、旧文件清理、最低必需集合，以及自动更新发现、冷却决策、状态原子写入和单入口约束。GitHub Actions 会在 Windows PowerShell 5.1 下运行同一测试入口。
+测试覆盖配置优先级与验证、启动锁、日志轮转、内部脚本解析、helper 原子刷新、损坏修复、旧文件清理、最低必需集合，以及自动更新发现、包激活等待、延迟状态、旧失败状态纠正、状态原子写入和单入口约束。GitHub Actions 会在 Windows PowerShell 5.1 下运行同一测试入口。
 
 ## 项目结构
 

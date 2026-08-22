@@ -37,7 +37,18 @@ try {
         throw $exception
     }
 
-    $automaticUpdate = Invoke-CodexAutomaticUpdate -InstalledPackage $status.Package -Config $config
+    try {
+        $automaticUpdate = Invoke-CodexAutomaticUpdate -InstalledPackage $status.Package -Config $config
+    }
+    catch {
+        $updateInfo = Get-CodexProxyExceptionInfo -Exception $_.Exception
+        Write-CodexProxyLog -Path $config.LogFilePath -Message "更新协调器异常：[$($updateInfo.Code)] $($updateInfo.Message)；继续启动当前版本。" -Level WARN -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null
+        $automaticUpdate = [pscustomobject]@{
+            Attempted=$false; Updated=$false; Reason='CoordinatorError'; Package=$status.Package
+            InstalledVersion=[version]$status.Package.Version; TargetVersion=$null; RetryAfterUtc=$null
+            Code=$updateInfo.Code; Message=$updateInfo.Message
+        }
+    }
     if ($automaticUpdate.Updated) {
         Write-CodexProxyLog -Path $config.LogFilePath -Message "自动更新成功：$($status.Package.Version) -> $($automaticUpdate.InstalledVersion)。" -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null
         $status = Get-CodexProxyStatus -Config $config
@@ -48,11 +59,8 @@ try {
             throw $exception
         }
     }
-    elseif ($automaticUpdate.Attempted) {
-        Write-CodexProxyLog -Path $config.LogFilePath -Message "自动更新暂未完成：target=$($automaticUpdate.TargetVersion)；[$($automaticUpdate.Code)] $($automaticUpdate.Message)；继续启动当前版本。" -Level WARN -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null
-    }
-    elseif ($automaticUpdate.Reason -eq 'Cooldown') {
-        Write-CodexProxyLog -Path $config.LogFilePath -Message "自动更新处于冷却期：target=$($automaticUpdate.TargetVersion)；retryAfter=$($automaticUpdate.RetryAfterUtc.ToString('o'))；继续启动当前版本。" -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null
+    elseif ($automaticUpdate.Reason -eq 'AwaitingAppUpdater') {
+        Write-CodexProxyLog -Path $config.LogFilePath -Message "已检测到 Codex $($automaticUpdate.TargetVersion)，Windows 尚未完成包切换；启动当前版本并由内置更新器继续处理。完全退出后再次启动即可应用。" -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null
     }
 
     Write-CodexProxyLog -Path $config.LogFilePath -Message "使用 Codex 包 $($status.Package.Version)。" -RunId $runId -MaxBytes $config.LogMaxBytes -Retention $config.LogRetention | Out-Null

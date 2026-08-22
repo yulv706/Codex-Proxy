@@ -52,15 +52,30 @@ try {
     $status = Get-CodexProxyStatus -Config $config
     $reportedUpdateVersion = if ($status.Package) { Get-CodexReportedUpdateVersion -Package $status.Package } else { $null }
     $automaticUpdateState = Read-CodexUpdateState -Path $config.UpdateStateFilePath
-    $automaticUpdateDecision = if ($status.Package) {
-        Get-CodexAutoUpdateDecision -InstalledVersion ([version]$status.Package.Version) -ReportedVersion $reportedUpdateVersion -State $automaticUpdateState -RetryCooldownMinutes $config.UpdateRetryCooldownMinutes
-    } else { $null }
+    $automaticUpdatePending = [bool]($reportedUpdateVersion -and $status.Package -and $reportedUpdateVersion -gt [version]$status.Package.Version)
+    $automaticUpdateStateTarget = $null
+    if ($automaticUpdateState -and $automaticUpdateState.PSObject.Properties.Name -contains 'TargetVersion') {
+        $stateTargetText = [string]$automaticUpdateState.TargetVersion
+        [version]::TryParse($stateTargetText, [ref]$automaticUpdateStateTarget) | Out-Null
+    }
+    $automaticUpdateOutcome = if ($automaticUpdatePending -and $automaticUpdateStateTarget -ne $reportedUpdateVersion) {
+        'Pending'
+    }
+    elseif ($automaticUpdateStateTarget -and $status.Package -and $automaticUpdateStateTarget -le [version]$status.Package.Version) {
+        'Succeeded'
+    }
+    elseif ($automaticUpdateState -and $automaticUpdateState.PSObject.Properties.Name -contains 'Outcome') {
+        $automaticUpdateState.Outcome
+    }
+    else {
+        $null
+    }
     $desktopPath = [Environment]::GetFolderPath('Desktop')
     $shortcutPath = Join-Path $desktopPath $config.ShortcutName
     $shortcut = Test-CodexProxyShortcut -Path $shortcutPath -LauncherPath $launcherPath
 
     $result = [pscustomobject]@{
-        SchemaVersion               = 3
+        SchemaVersion               = 4
         ProjectRoot                 = $projectRoot
         ProxyUrl                    = $config.ProxyUrl
         ProxyReady                  = $status.Proxy.Ready
@@ -69,10 +84,10 @@ try {
         CodexInstalled              = [bool]$status.Package
         CodexVersion                = if ($status.Package) { $status.Package.Version.ToString() } else { $null }
         ReportedUpdateVersion       = if ($reportedUpdateVersion) { $reportedUpdateVersion.ToString() } else { $null }
-        AutomaticUpdatePending      = [bool]($reportedUpdateVersion -and $status.Package -and $reportedUpdateVersion -gt [version]$status.Package.Version)
-        AutomaticUpdateDue          = [bool]($automaticUpdateDecision -and $automaticUpdateDecision.ShouldAttempt)
-        AutomaticUpdateRetryAfter   = if ($automaticUpdateDecision) { $automaticUpdateDecision.RetryAfterUtc } else { $null }
-        AutomaticUpdateLastOutcome  = if ($automaticUpdateState) { $automaticUpdateState.Outcome } else { $null }
+        AutomaticUpdatePending      = $automaticUpdatePending
+        AutomaticUpdateDue          = $automaticUpdatePending
+        AutomaticUpdateRetryAfter   = $null
+        AutomaticUpdateLastOutcome  = $automaticUpdateOutcome
         CodexApplicationReady       = [bool]$status.ApplicationInfo
         CodexCurrentlyRunning       = $status.RunningProcesses.Count -gt 0
         CodexRunningProcessCount    = $status.RunningProcesses.Count

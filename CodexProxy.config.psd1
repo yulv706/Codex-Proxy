@@ -1,5 +1,5 @@
 ﻿@{
-    SchemaVersion              = 4
+    SchemaVersion              = 5
     ProxyHost                  = '127.0.0.1'
     ProxyPort                  = 7891
     ProxyProbeHost             = 'api.openai.com'
@@ -17,8 +17,6 @@
     LogMaxBytes                = 1048576
     LogRetention               = 3
     RequireValidSignatures     = $true
-    UpdateStoreProductId       = '9PLM9XGG6VKS'
-    UpdateAttemptTimeoutSeconds = 120
-    UpdateRetryCooldownMinutes = 360
+    UpdateActivationWaitSeconds = 20
     UpdateStatePath            = 'CodexProxy\update-state.json'
 }

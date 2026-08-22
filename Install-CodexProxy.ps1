@@ -8,7 +8,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$productVersion = '2.2.0'
+$productVersion = '2.3.0'
 $sourceRoot = $PSScriptRoot
 $sourceModulePath = Join-Path $sourceRoot 'src\CodexProxy.Common.psm1'
 $sourceConfigPath = Join-Path $sourceRoot 'CodexProxy.config.psd1'
