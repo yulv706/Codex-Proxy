@@ -3,7 +3,8 @@ param(
     [ValidateRange(1, 65535)][int]$ProxyPort,
     [switch]$Detailed,
     [switch]$Json,
-    [switch]$Repair
+    [switch]$Repair,
+    [switch]$Monitor
 )
 
 Set-StrictMode -Version Latest
@@ -14,8 +15,9 @@ $modulePath = Join-Path $projectRoot 'src\CodexProxy.Common.psm1'
 $configPath = Join-Path $projectRoot 'CodexProxy.config.psd1'
 $userConfigPath = Join-Path $projectRoot 'CodexProxy.user.psd1'
 $launcherPath = Join-Path $projectRoot 'Start-CodexProxy.ps1'
+$applicationPath = Join-Path $projectRoot 'CodexProxy.exe'
 $installerPath = Join-Path $projectRoot 'Install-CodexProxy.ps1'
-$iconPath = Join-Path $projectRoot 'assets\codex-official-transparent.ico'
+$iconPath = Join-Path $projectRoot 'assets\codex-proxy.ico'
 
 try {
     Import-Module -Name $modulePath -Force
@@ -30,6 +32,7 @@ try {
         if (Test-Path -LiteralPath $localStatePath -PathType Leaf) {
             $localState = Get-Content -LiteralPath $localStatePath -Raw | ConvertFrom-Json
             if ($localState.InstallMode -eq 'Portable') { $repairArguments.Portable = $true }
+            elseif ($localState.PSObject.Properties.Name -contains 'InstallRoot' -and $localState.InstallRoot) { $repairArguments.InstallDirectory = [string]$localState.InstallRoot }
         }
         if ($Json) {
             & $installerPath @repairArguments 6>$null | Out-Null
@@ -38,7 +41,7 @@ try {
             & $installerPath @repairArguments
         }
 
-        $repairedRoot = if ($repairArguments.ContainsKey('Portable')) { $projectRoot } else { $config.InstallDirectory }
+        $repairedRoot = if ($repairArguments.ContainsKey('Portable')) { $projectRoot } elseif ($repairArguments.ContainsKey('InstallDirectory')) { [string]$repairArguments.InstallDirectory } else { $config.InstallDirectory }
         $repairedDiagnostic = Join-Path $repairedRoot 'Test-CodexProxy.ps1'
         if ([IO.Path]::GetFullPath($repairedDiagnostic) -ne [IO.Path]::GetFullPath($PSCommandPath)) {
             $forwardArguments = @('-NoLogo','-NoProfile','-File',$repairedDiagnostic)
@@ -49,7 +52,12 @@ try {
         }
     }
 
-    $status = Get-CodexProxyStatus -Config $config
+    $statusConfig = $config
+    if ($Monitor) {
+        $statusConfig = $config.PSObject.Copy()
+        $statusConfig.RequireValidSignatures = $false
+    }
+    $status = Get-CodexProxyStatus -Config $statusConfig
     $reportedUpdateVersion = if ($status.Package) { Get-CodexReportedUpdateVersion -Package $status.Package } else { $null }
     $automaticUpdateState = Read-CodexUpdateState -Path $config.UpdateStateFilePath
     $automaticUpdatePending = [bool]($reportedUpdateVersion -and $status.Package -and $reportedUpdateVersion -gt [version]$status.Package.Version)
@@ -72,10 +80,11 @@ try {
     }
     $desktopPath = [Environment]::GetFolderPath('Desktop')
     $shortcutPath = Join-Path $desktopPath $config.ShortcutName
-    $shortcut = Test-CodexProxyShortcut -Path $shortcutPath -LauncherPath $launcherPath
+    $shortcut = Test-CodexProxyAppShortcut -Path $shortcutPath -ApplicationPath $applicationPath
+    $applicationPresent = Test-Path -LiteralPath $applicationPath -PathType Leaf
 
     $result = [pscustomobject]@{
-        SchemaVersion               = 4
+        SchemaVersion               = 5
         ProjectRoot                 = $projectRoot
         ProxyUrl                    = $config.ProxyUrl
         ProxyReady                  = $status.Proxy.Ready
@@ -92,17 +101,20 @@ try {
         CodexCurrentlyRunning       = $status.RunningProcesses.Count -gt 0
         CodexRunningProcessCount    = $status.RunningProcesses.Count
         AppxLaunchCommandAvailable  = $status.InvokeCommandAvailable
+        ApplicationPresent          = $applicationPresent
         LauncherPresent             = Test-Path -LiteralPath $launcherPath -PathType Leaf
         IconPresent                 = Test-Path -LiteralPath $iconPath -PathType Leaf
         DesktopShortcut             = $shortcutPath
         DesktopShortcutReady        = $shortcut.Ready
         DesktopShortcutTarget       = $shortcut.TargetPath
         DesktopShortcutArguments    = $shortcut.Arguments
-        ReadyToLaunchNow            = [bool]($status.ReadyNow -and $shortcut.Ready)
-        ReadyToLaunchAfterCodexExit = [bool]($status.ReadyAfterCodexExit -and $shortcut.Ready)
-        BlockingCode                = if ($status.BlockingCode -and $status.BlockingCode -ne 'CODEX_ALREADY_RUNNING') { $status.BlockingCode } elseif (-not $shortcut.Ready) { $shortcut.Code } else { $status.BlockingCode }
-        BlockingMessage             = if ($status.BlockingCode -and $status.BlockingCode -ne 'CODEX_ALREADY_RUNNING') { $status.BlockingMessage } elseif (-not $shortcut.Ready) { '桌面快捷方式缺失或与当前安装不匹配。' } else { $status.BlockingMessage }
-        Remediation                 = if ($status.BlockingCode -and $status.BlockingCode -ne 'CODEX_ALREADY_RUNNING') { $status.Remediation } elseif (-not $shortcut.Ready) { '运行 Test-CodexProxy.ps1 -Repair 修复安装和快捷方式。' } else { $status.Remediation }
+        RuntimeReadyNow             = [bool]$status.ReadyNow
+        RuntimeReadyAfterCodexExit  = [bool]$status.ReadyAfterCodexExit
+        ReadyToLaunchNow            = [bool]($status.ReadyNow -and $applicationPresent -and $shortcut.Ready)
+        ReadyToLaunchAfterCodexExit = [bool]($status.ReadyAfterCodexExit -and $applicationPresent -and $shortcut.Ready)
+        BlockingCode                = if ($status.BlockingCode -and $status.BlockingCode -ne 'CODEX_ALREADY_RUNNING') { $status.BlockingCode } elseif (-not $applicationPresent) { 'APPLICATION_MISSING' } elseif (-not $shortcut.Ready) { $shortcut.Code } else { $status.BlockingCode }
+        BlockingMessage             = if ($status.BlockingCode -and $status.BlockingCode -ne 'CODEX_ALREADY_RUNNING') { $status.BlockingMessage } elseif (-not $applicationPresent) { 'Codex Proxy 桌面应用缺失。' } elseif (-not $shortcut.Ready) { '桌面快捷方式缺失或与当前安装不匹配。' } else { $status.BlockingMessage }
+        Remediation                 = if ($status.BlockingCode -and $status.BlockingCode -ne 'CODEX_ALREADY_RUNNING') { $status.Remediation } elseif (-not $applicationPresent -or -not $shortcut.Ready) { '运行 Test-CodexProxy.ps1 -Repair 修复安装和快捷方式。' } else { $status.Remediation }
         LogPath                     = $config.LogFilePath
     }
 

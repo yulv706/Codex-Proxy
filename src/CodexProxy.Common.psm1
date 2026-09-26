@@ -478,6 +478,23 @@ function Test-CodexProxyShortcut {
     [pscustomobject]@{Ready=[bool]($targetMatches -and $argumentsMatch);Exists=$true;Owned=[bool]($targetMatches -and $shortcut.Arguments -match [regex]::Escape($scriptName));TargetPath=$shortcut.TargetPath;Arguments=$shortcut.Arguments;Code=if($targetMatches -and $argumentsMatch){'SHORTCUT_READY'}else{'SHORTCUT_MISMATCH'}}
 }
 
+function Test-CodexProxyAppShortcut {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$ApplicationPath)
+    if(-not(Test-Path -LiteralPath $Path -PathType Leaf)){return [pscustomobject]@{Ready=$false;Exists=$false;Owned=$false;TargetPath=$null;Arguments=$null;Code='SHORTCUT_MISSING'}}
+    $shell=New-Object -ComObject WScript.Shell
+    $shortcut=$shell.CreateShortcut($Path)
+    $expectedPath=[IO.Path]::GetFullPath($ApplicationPath)
+    $actualPath=if([string]::IsNullOrWhiteSpace([string]$shortcut.TargetPath)){''}else{[IO.Path]::GetFullPath([string]$shortcut.TargetPath)}
+    $targetMatches=$actualPath.Equals($expectedPath,[StringComparison]::OrdinalIgnoreCase)
+    $argumentsMatch=[string]::IsNullOrWhiteSpace([string]$shortcut.Arguments)
+    [pscustomobject]@{
+        Ready=[bool]($targetMatches -and $argumentsMatch);Exists=$true;Owned=$targetMatches
+        TargetPath=$shortcut.TargetPath;Arguments=$shortcut.Arguments
+        Code=if($targetMatches -and $argumentsMatch){'SHORTCUT_READY'}else{'SHORTCUT_MISMATCH'}
+    }
+}
+
 function Enter-CodexProxyLaunchLock {
     [CmdletBinding()]param()
     $mutex=New-Object Threading.Mutex($false,'Local\CodexProxy.Launch')
@@ -492,4 +509,4 @@ function Wait-CodexPackageProcess {
     @()
 }
 
-Export-ModuleMember -Function @('Get-CodexProxyConfig','Get-CodexProxyExceptionInfo','Write-CodexProxyLog','Show-CodexProxyError','Get-CodexProxyListener','Test-CodexProxyEndpoint','Get-CodexPackage','Get-CodexPackageProcess','Get-CodexReportedUpdateVersion','Wait-CodexPackageActivation','Read-CodexUpdateState','Write-CodexUpdateState','Invoke-CodexAutomaticUpdate','Get-CodexApplicationInfo','Sync-CodexHelpers','New-CodexProxyInnerScript','Get-CodexProxyStatus','Get-CodexProxyShortcutArguments','Test-CodexProxyShortcut','Enter-CodexProxyLaunchLock','Wait-CodexPackageProcess')
+Export-ModuleMember -Function @('Get-CodexProxyConfig','Get-CodexProxyExceptionInfo','Write-CodexProxyLog','Show-CodexProxyError','Get-CodexProxyListener','Test-CodexProxyEndpoint','Get-CodexPackage','Get-CodexPackageProcess','Get-CodexReportedUpdateVersion','Wait-CodexPackageActivation','Read-CodexUpdateState','Write-CodexUpdateState','Invoke-CodexAutomaticUpdate','Get-CodexApplicationInfo','Sync-CodexHelpers','New-CodexProxyInnerScript','Get-CodexProxyStatus','Get-CodexProxyShortcutArguments','Test-CodexProxyShortcut','Test-CodexProxyAppShortcut','Enter-CodexProxyLaunchLock','Wait-CodexPackageProcess')
