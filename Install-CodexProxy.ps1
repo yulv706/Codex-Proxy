@@ -12,7 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$productVersion = '3.5.8'
+$productVersion = '4.1.0'
 $sourceRoot = $PSScriptRoot
 $sourceModulePath = Join-Path $sourceRoot 'src\CodexProxy.Common.psm1'
 $installationModulePath = Join-Path $sourceRoot 'src\CodexProxy.Installation.psm1'
@@ -41,6 +41,10 @@ $installRoot = $installTarget.InstallDirectory
 $buildScriptPath = Join-Path $sourceRoot 'Build-CodexProxyApp.ps1'
 $builtApplicationPath = Join-Path $sourceRoot 'bin\CodexProxy.exe'
 $applicationPath = Join-Path $installRoot 'CodexProxy.exe'
+$productFiles = Import-PowerShellDataFile -LiteralPath (Join-Path $sourceRoot 'CodexProxy.files.psd1')
+foreach ($relativePath in $productFiles.Files) {
+    if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $relativePath) -PathType Leaf)) { throw "安装包文件缺失：$relativePath，请重新解压完整安装包。" }
+}
 
 function Stop-CodexProxyTray {
     param([Parameter(Mandatory)][string]$ExpectedApplicationPath)
@@ -89,18 +93,18 @@ if ($PSCmdlet.ShouldProcess($installRoot, $(if($Portable){'配置便携安装'}e
     if (-not $applicationNeedsBuild) {
         try { $applicationNeedsBuild = (Get-Item -LiteralPath $builtApplicationPath).VersionInfo.FileVersionRaw -ne ($productVersion + '.0') } catch { $applicationNeedsBuild = $true }
     }
+    if (-not $applicationNeedsBuild) {
+        $builtAt = (Get-Item -LiteralPath $builtApplicationPath).LastWriteTimeUtc
+        $applicationNeedsBuild = @($productFiles.Files | Where-Object { $_ -like 'src\*' -and (Get-Item -LiteralPath (Join-Path $sourceRoot $_)).LastWriteTimeUtc -gt $builtAt }).Count -gt 0
+    }
     if ($applicationNeedsBuild) { & $buildScriptPath -OutputPath $builtApplicationPath }
     if (-not (Test-Path -LiteralPath $builtApplicationPath -PathType Leaf)) { throw "桌面应用构建结果不存在：$builtApplicationPath" }
 
     New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
-    foreach ($relativePath in @(
-        'Start-CodexProxy.ps1', 'Test-CodexProxy.ps1', 'HistorySync.ps1', 'Install-CodexProxy.ps1', 'Detect-CodexProxyInstallation.ps1', 'Build-CodexProxyApp.ps1', 'Build-CodexProxyInstaller.ps1', 'Build-CodexProxyPackage.ps1', 'Generate-CodexProxyIcon.ps1',
-        'Uninstall-CodexProxy.ps1', 'Repair-CodexHistory.ps1', 'CodexProxy.config.psd1', 'README.md',
-        'src\CodexProxy.Common.psm1', 'src\CodexProxy.Installation.psm1', 'src\CodexProxy.App.cs', 'src\CodexProxy.Ui.cs', 'src\CodexProxy.MainWindow.cs', 'src\CodexProxy.Setup.cs', 'assets\codex-proxy.ico', 'docs\history-sync-design.md',
-        'bin\CodexProxy.exe'
-    )) {
+    foreach ($relativePath in @($productFiles.Files) + @('bin\CodexProxy.exe')) {
         Copy-ProductFile -RelativePath $relativePath
     }
+    Remove-CodexProxyRetiredFiles -InstallDirectory $installRoot
     if ([IO.Path]::GetFullPath($builtApplicationPath) -ne [IO.Path]::GetFullPath($applicationPath)) {
         $applicationTemporary = "$applicationPath.installing-$([guid]::NewGuid().ToString('N')).tmp"
         try {
@@ -113,9 +117,19 @@ if ($PSCmdlet.ShouldProcess($installRoot, $(if($Portable){'配置便携安装'}e
     }
 
     $userConfigPath = Join-Path $installRoot 'CodexProxy.user.psd1'
-    $userConfigTemporary = "$userConfigPath.installing-$([guid]::NewGuid().ToString('N')).tmp"
-    "@{`r`n    ProxyPort = $ProxyPort`r`n}`r`n" | Set-Content -LiteralPath $userConfigTemporary -Encoding UTF8
-    Move-Item -LiteralPath $userConfigTemporary -Destination $userConfigPath -Force
+    if (-not (Test-Path -LiteralPath $userConfigPath) -or $proxyPortWasSpecified) {
+        $userConfigTemporary = "$userConfigPath.installing-$([guid]::NewGuid().ToString('N')).tmp"
+        $userConfigText = if (Test-Path -LiteralPath $userConfigPath) { Get-Content -LiteralPath $userConfigPath -Raw } else { "@{`r`n}`r`n" }
+        if ($userConfigText -match '(?im)^\s*ProxyPort\s*=\s*\d+\s*$') {
+            $userConfigText = [regex]::Replace($userConfigText, '(?im)^(\s*ProxyPort\s*=\s*)\d+(\s*)$', [Text.RegularExpressions.MatchEvaluator]{ param($match) $match.Groups[1].Value + $ProxyPort + $match.Groups[2].Value })
+        }
+        else { $userConfigText = $userConfigText.Insert($userConfigText.LastIndexOf('}'), "    ProxyPort = $ProxyPort`r`n") }
+        try {
+            $userConfigText | Set-Content -LiteralPath $userConfigTemporary -Encoding UTF8
+            Move-Item -LiteralPath $userConfigTemporary -Destination $userConfigPath -Force
+        }
+        finally { if (Test-Path -LiteralPath $userConfigTemporary) { Remove-Item -LiteralPath $userConfigTemporary -Force } }
+    }
 
     $launcherPath = Join-Path $installRoot 'Start-CodexProxy.ps1'
     $iconPath = Join-Path $installRoot 'assets\codex-proxy.ico'
@@ -225,7 +239,7 @@ if ($PSCmdlet.ShouldProcess($installRoot, $(if($Portable){'配置便携安装'}e
         [pscustomobject]@{
             SchemaVersion       = 4
             ProductVersion      = $productVersion
-            InstallMode         = if ($Portable) { 'Portable' } elseif ($customInstallRoot) { 'Custom' } else { 'LocalAppData' }
+            InstallMode         = if ($Portable) { 'Portable' } elseif (-not $installRoot.Equals($baseConfig.InstallDirectory, [StringComparison]::OrdinalIgnoreCase)) { 'Custom' } else { 'LocalAppData' }
             InstallRoot         = $installRoot
             ApplicationPath     = $applicationPath
             LauncherPath        = $launcherPath

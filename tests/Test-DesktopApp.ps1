@@ -12,21 +12,23 @@ $testRoot = Join-Path ([IO.Path]::GetTempPath()) "codex-proxy-desktop-test-$([gu
 $applicationPath = Join-Path $testRoot 'CodexProxy.exe'
 $instanceSuffix = [guid]::NewGuid().ToString('N')
 $process = $null
+$savedDataDirectory = $env:CODEX_PROXY_DATA_DIRECTORY
+$env:CODEX_PROXY_DATA_DIRECTORY = Join-Path $testRoot 'app-data'
 
 try {
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
     & $buildScript -OutputPath $applicationPath
     if (-not (Test-Path -LiteralPath $applicationPath -PathType Leaf)) { throw 'The desktop application was not built.' }
-    if ((Get-Item -LiteralPath $applicationPath).VersionInfo.FileVersion -ne '3.5.8.0') { throw 'The desktop application file version is incorrect.' }
+    if ((Get-Item -LiteralPath $applicationPath).VersionInfo.FileVersion -ne '4.1.0.0') { throw 'The desktop application file version is incorrect.' }
     if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) { throw 'The custom application icon was not generated.' }
     $iconBytes = [IO.File]::ReadAllBytes($iconPath)
     if ($iconBytes.Length -lt 4096 -or [BitConverter]::ToUInt16($iconBytes, 4) -lt 8) { throw 'The application icon does not contain the expected multi-size artwork.' }
 
-    $uiSelfTest = Start-Process -FilePath $applicationPath -ArgumentList '--self-test-ui' -WorkingDirectory $testRoot -PassThru -Wait
-    if ($uiSelfTest.ExitCode -ne 0) { throw 'The single-window navigation and embedded history UI self-test failed.' }
+    $uiSelfTest = Start-Process -WindowStyle Hidden -FilePath $applicationPath -ArgumentList '--self-test-ui' -WorkingDirectory $testRoot -PassThru -Wait
+    if ($uiSelfTest.ExitCode -ne 0) { throw 'The proxy page navigation and UI self-test failed.' }
     $uiSelfTest.Dispose()
 
-    $cleanupSelfTest = Start-Process -FilePath $applicationPath -ArgumentList @('--self-test-process-cleanup',"--instance-suffix=cleanup-$instanceSuffix") -WorkingDirectory $testRoot -PassThru
+    $cleanupSelfTest = Start-Process -WindowStyle Hidden -FilePath $applicationPath -ArgumentList @('--self-test-process-cleanup',"--instance-suffix=cleanup-$instanceSuffix") -WorkingDirectory $testRoot -PassThru
     if (-not $cleanupSelfTest.WaitForExit(7000)) {
         Stop-Process -Id $cleanupSelfTest.Id -Force -ErrorAction SilentlyContinue
         throw 'The runtime bridge did not cancel its outstanding PowerShell child process.'
@@ -41,7 +43,7 @@ try {
     $savedModulePath = $env:PSModulePath
     try {
         $env:PSModulePath = $shadowModuleRoot + [IO.Path]::PathSeparator + $savedModulePath
-        $powerShellSelfTest = Start-Process -FilePath $applicationPath -ArgumentList '--self-test-powershell' -WorkingDirectory $testRoot -PassThru -Wait
+        $powerShellSelfTest = Start-Process -WindowStyle Hidden -FilePath $applicationPath -ArgumentList '--self-test-powershell' -WorkingDirectory $testRoot -PassThru -Wait
         if ($powerShellSelfTest.ExitCode -ne 0) { throw 'The desktop bridge inherited an incompatible PowerShell module path.' }
         $powerShellSelfTest.Dispose()
     }
@@ -60,10 +62,17 @@ try {
     $shortcutStatus = Test-CodexProxyAppShortcut -Path $shortcutPath -ApplicationPath $applicationPath
     if (-not $shortcutStatus.Ready -or -not $shortcutStatus.Owned) { throw 'The desktop application shortcut was not recognized.' }
 
-    $process = Start-Process -FilePath $applicationPath -ArgumentList @('--background',"--instance-suffix=$instanceSuffix") -WorkingDirectory $testRoot -PassThru
+    $process = Start-Process -WindowStyle Hidden -FilePath $applicationPath -ArgumentList @('--background',"--instance-suffix=$instanceSuffix") -WorkingDirectory $testRoot -PassThru
     Start-Sleep -Seconds 2
     $process.Refresh()
     if ($process.HasExited) { throw 'The tray application exited instead of remaining in the background.' }
+    $duplicate = Start-Process -WindowStyle Hidden -FilePath $applicationPath -ArgumentList @('--background',"--instance-suffix=$instanceSuffix") -WorkingDirectory $testRoot -PassThru
+    try {
+        if (-not $duplicate.WaitForExit(3000)) { Stop-Process -Id $duplicate.Id -Force; throw 'A duplicate tray instance was not rejected.' }
+        $process.Refresh()
+        if ($process.HasExited) { throw 'Starting a duplicate stopped the original tray instance.' }
+    }
+    finally { $duplicate.Dispose() }
 
     $exitEvent = [Threading.EventWaitHandle]::OpenExisting("Local\CodexProxy.Tray.Exit.$instanceSuffix")
     try { $exitEvent.Set() | Out-Null } finally { $exitEvent.Dispose() }
@@ -72,6 +81,7 @@ try {
     Write-Host 'PASS: native desktop build, application shortcut, background tray lifetime, and graceful shutdown.' -ForegroundColor Green
 }
 finally {
+    $env:CODEX_PROXY_DATA_DIRECTORY = $savedDataDirectory
     if ($process) {
         $process.Refresh()
         if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }

@@ -1,0 +1,150 @@
+﻿<?xml version="1.0" ?>
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework" Title="Codex Proxy 安装向导" Width="830" Height="620" MinWidth="830" MinHeight="620" WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="NoResize" Background="{DynamicResource Canvas}" Foreground="{DynamicResource Text}" FontFamily="Microsoft YaHei UI, Segoe UI" UseLayoutRounding="True">
+  <Border BorderBrush="{DynamicResource Line}" BorderThickness="1" Background="{DynamicResource Canvas}">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="40"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="72"/>
+      </Grid.RowDefinitions>
+      <Grid Background="{DynamicResource Sidebar}">
+        <TextBlock Text="Codex Proxy 安装向导" FontSize="11" Foreground="{DynamicResource Secondary}" Margin="17,0" VerticalAlignment="Center"/>
+        <Button x:Name="CloseButton" Style="{StaticResource GhostButton}" Content="×" Width="44" Height="38" Padding="0" HorizontalAlignment="Right" FontSize="18" shell:WindowChrome.IsHitTestVisibleInChrome="True" IsEnabled="{Binding CanClose}" AutomationProperties.Name="关闭安装向导"/>
+      </Grid>
+      <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="225"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Border Background="{DynamicResource Sidebar}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
+          <Grid Margin="27,28">
+            <StackPanel>
+              <Border Width="49" Height="49" CornerRadius="14" HorizontalAlignment="Left" Background="{DynamicResource Accent}">
+                <TextBlock Text="C" FontFamily="Segoe UI" FontSize="35" Foreground="{DynamicResource OnAccent}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-3,0,0"/>
+              </Border>
+              <TextBlock Text="Codex Proxy" FontFamily="Segoe UI" FontWeight="SemiBold" FontSize="21" Margin="0,17,0,0"/>
+              <TextBlock Text="本地代理启动工具" Style="{StaticResource Caption}" Margin="0,8,0,38"/>
+              <TextBlock Text="01   安装选项" Margin="0,0,0,20">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                    <Setter Property="Foreground" Value="{DynamicResource Secondary}"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding Stage}" Value="options">
+                        <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
+                        <Setter Property="FontWeight" Value="SemiBold"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+              <TextBlock Text="02   安装与配置" Margin="0,0,0,20">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                    <Setter Property="Foreground" Value="{DynamicResource Secondary}"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding Stage}" Value="installing">
+                        <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
+                        <Setter Property="FontWeight" Value="SemiBold"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+              <TextBlock Text="03   准备就绪" Margin="0">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                    <Setter Property="Foreground" Value="{DynamicResource Secondary}"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding Stage}" Value="complete">
+                        <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
+                        <Setter Property="FontWeight" Value="SemiBold"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+            </StackPanel>
+            <StackPanel VerticalAlignment="Bottom">
+              <TextBlock Text="WINDOWS DESKTOP" FontFamily="Segoe UI" FontSize="9" Foreground="{DynamicResource Muted}"/>
+              <TextBlock Text="{Binding Version, StringFormat=版本 {0}}" Style="{StaticResource Caption}" Margin="0,7,0,0"/>
+            </StackPanel>
+          </Grid>
+        </Border>
+        <Grid Grid.Column="1" Margin="30,26,30,18">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <StackPanel>
+            <TextBlock Text="{Binding Title}" FontSize="23" FontWeight="SemiBold"/>
+            <TextBlock Text="{Binding Description}" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="21" Margin="0,9,0,21"/>
+          </StackPanel>
+          <Grid Grid.Row="1">
+            <StackPanel Visibility="{Binding Stage, Converter={StaticResource PageVisible}, ConverterParameter=options}">
+              <Border Background="{DynamicResource AccentSoft}" CornerRadius="8" Padding="13,11" Margin="0,0,0,21">
+                <TextBlock Text="{Binding DetectionText}" Foreground="{DynamicResource AccentText}" FontSize="12" TextWrapping="Wrap" LineHeight="20"/>
+              </Border>
+              <TextBlock Text="安装目录" FontWeight="SemiBold" Margin="0,0,0,9"/>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="InstallPathInput" Text="{Binding InstallDirectory, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding IsUpgrade}" IsEnabled="{Binding OptionsEnabled}" AutomationProperties.Name="安装目录"/>
+                <Button Grid.Column="1" x:Name="BrowseButton" Content="浏览" Margin="9,0,0,0" IsEnabled="{Binding CanBrowse}"/>
+              </Grid>
+              <TextBlock Text="{Binding PathError}" Foreground="{DynamicResource Danger}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,12"/>
+              <Border Style="{StaticResource Card}" Padding="15,3">
+                <StackPanel>
+                  <Grid Margin="0,12">
+                    <TextBlock Text="创建桌面快捷方式" VerticalAlignment="Center"/>
+                    <CheckBox Style="{StaticResource Toggle}" HorizontalAlignment="Right" IsChecked="{Binding DesktopShortcut}" IsEnabled="{Binding OptionsEnabled}" AutomationProperties.Name="创建桌面快捷方式"/>
+                  </Grid>
+                  <Border Height="1" Background="{DynamicResource Line}"/>
+                  <Grid Margin="0,12">
+                    <TextBlock Text="创建开始菜单快捷方式" VerticalAlignment="Center"/>
+                    <CheckBox Style="{StaticResource Toggle}" HorizontalAlignment="Right" IsChecked="{Binding StartMenuShortcut}" IsEnabled="{Binding OptionsEnabled}" AutomationProperties.Name="创建开始菜单快捷方式"/>
+                  </Grid>
+                  <Border Height="1" Background="{DynamicResource Line}"/>
+                  <Grid Margin="0,12">
+                    <TextBlock Text="完成后打开 Codex Proxy" VerticalAlignment="Center"/>
+                    <CheckBox Style="{StaticResource Toggle}" HorizontalAlignment="Right" IsChecked="{Binding LaunchAfterInstall}" IsEnabled="{Binding OptionsEnabled}" AutomationProperties.Name="完成后打开 Codex Proxy"/>
+                  </Grid>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+            <StackPanel Visibility="{Binding Stage, Converter={StaticResource PageVisible}, ConverterParameter=installing}" VerticalAlignment="Center" Margin="0,0,0,35">
+              <Path Style="{StaticResource Icon}" Data="{StaticResource IExport}" Width="35" Height="35" Stroke="{DynamicResource Accent}" HorizontalAlignment="Left" Margin="0,0,0,20"/>
+              <TextBlock Text="正在安装到" Style="{StaticResource Caption}"/>
+              <TextBlock Text="{Binding InstallDirectory}" TextWrapping="Wrap" FontFamily="Consolas" Margin="0,9,0,24"/>
+              <ProgressBar Height="5" IsIndeterminate="True" Foreground="{DynamicResource Accent}" Background="{DynamicResource Subtle}" BorderThickness="0"/>
+              <TextBlock Text="复制程序文件、更新快捷方式并保留现有配置。" Style="{StaticResource Caption}" Margin="0,19,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel Visibility="{Binding Stage, Converter={StaticResource PageVisible}, ConverterParameter=complete}" VerticalAlignment="Center" Margin="0,0,0,35">
+              <Border Background="{DynamicResource SuccessSoft}" Width="55" Height="55" CornerRadius="28" HorizontalAlignment="Left" Margin="0,0,0,20">
+                <Path Style="{StaticResource Icon}" Data="{StaticResource ICheck}" Width="27" Height="27" Stroke="{DynamicResource Success}"/>
+              </Border>
+              <TextBlock Text="一切就绪。" FontSize="23" FontWeight="SemiBold"/>
+              <TextBlock Text="从桌面或开始菜单打开 Codex Proxy，选择 Codex、Cursor 或 Grok Bot，即可配置代理并启动应用。" Foreground="{DynamicResource Secondary}" TextWrapping="Wrap" LineHeight="23" Margin="0,13,0,20"/>
+              <TextBlock Text="{Binding InstallDirectory}" Style="{StaticResource Caption}" TextWrapping="Wrap" FontFamily="Consolas"/>
+              <Button x:Name="OpenFolderButton" Content="打开安装目录" HorizontalAlignment="Left" Margin="0,17,0,0"/>
+            </StackPanel>
+          </Grid>
+        </Grid>
+      </Grid>
+      <Border Grid.Row="2" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0">
+        <Grid Margin="24,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding Error}" ToolTip="{Binding Error}" Foreground="{DynamicResource Danger}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,20,0" MaxHeight="56"/>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <Button x:Name="CancelButton" Content="取消" Visibility="{Binding ShowCancel, Converter={StaticResource BoolVisible}}" Style="{StaticResource GhostButton}" IsEnabled="{Binding CanClose}" Margin="0,0,10,0"/>
+            <Button x:Name="InstallButton" Command="{Binding InstallCommand}" Style="{StaticResource PrimaryButton}" Content="{Binding ActionLabel}" IsEnabled="{Binding CanInstall}" MinWidth="108"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

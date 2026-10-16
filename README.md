@@ -1,10 +1,10 @@
 # Codex Proxy
 
-Codex Proxy 是面向 OpenAI Codex Windows Desktop 的原生 Windows 代理启动与状态监控工具。3.5.8 版本提供首页、历史会话、历史同步和设置四页，代理端口、历史仓库、归档同步与开机启动集中在设置页。历史同步以用户选择的逻辑项目为边界，可把电脑 A 的 `A:\work` 与电脑 B 的 `B:\work` 绑定为同一项目。程序还提供托盘后台监控、运行中历史快照，以及安装、原目录覆盖升级和卸载功能。本版改进了高 DPI 与窄窗口布局：状态卡随宽度重排，长状态文字换行，历史同步列表保留可用高度，设置页消除了多余的横向滚动条。
+Codex Proxy 是原生 Windows 多应用代理启动器。4.1.0 支持 Codex、Cursor、Grok Bot，以及用户添加的其他 `.exe` 应用。WPF 桌面程序提供代理启动、应用管理、运行诊断、运行日志和设置五个页面，支持浅色、深色和跟随系统主题。
 
-若历史目录已经被旧版本生成的冲突副本污染，可使用安装目录中的 `Repair-CodexHistory.ps1` 先预览，再在 Codex 完全退出后执行 `-Apply`。修复器只处理指定工作目录，执行前会备份 `state_*.sqlite`、`session_index.jsonl` 并把待移出的 rollout 文件隔离到备份目录，便于回滚。
+桌面端采用独立的视图、状态和运行服务。长任务异步执行，端口保存与偏好设置使用原子写入；托盘、安装向导、输入校验、错误提示和键盘操作使用一致的交互规则。设计实现参考 CC Switch 的语义化颜色、分组设置和导航组织，具体研究记录与架构见 [桌面架构说明](docs/desktop-architecture.md)。
 
-历史同步设置包含“历史会话同步”和“后台自动写入”两个开关。后台自动写入默认关闭；关闭时，程序不会因托盘监控、文件变化或 Codex 启停而自动修改本机历史文件，只能由用户点击“立即同步”主动应用。开启后才允许后台实时保存和退出时双向同步。
+历史会话浏览、跨电脑同步、后台快照、项目绑定和历史修复功能已移除。程序不再读取或写入 Codex 会话、会话索引和历史数据库。覆盖升级会清理旧版附带的历史同步脚本和设计文档，保留已有的会话、历史仓库、备份和历史同步配置；这些旧配置不再被程序使用。
 
 默认代理地址为 `http://127.0.0.1:7891`。安装完成后可在程序设置页修改本地代理端口；脚本化启动和诊断也支持临时指定端口。
 
@@ -13,8 +13,8 @@ Codex Proxy 是面向 OpenAI Codex Windows Desktop 的原生 Windows 代理启�
 ## 系统要求
 
 - Windows 10/11
-- Windows PowerShell 5.1 和 .NET Framework 4.x（Windows 10/11 默认组件）
-- 从官方 Microsoft Store 安装的 OpenAI Codex
+- Windows PowerShell 5.1 和 .NET Framework 4.8（当前 Windows 10/11 自带）
+- 至少安装一个需要代理启动的应用；Codex 需要来自官方 Microsoft Store，Cursor 和 Grok Bot 支持独立安装目录
 - 在本机回环地址提供 HTTP/Mixed 代理的客户端，例如 Clash Verge 或 sing-box
 
 ## 安装
@@ -54,31 +54,38 @@ powershell.exe -NoLogo -NoProfile -File ".\Install-CodexProxy.ps1" -Portable -Pr
 ## 使用
 
 1. 双击桌面的 `Codex-Proxy` 打开控制面板。
-2. 在“网络代理”中填写本地代理客户端的 HTTP/Mixed 端口，然后点击“保存端口”。
-3. 控制面板显示“已就绪”后，点击“通过代理启动 Codex”。
+2. 打开“设置”，在“网络代理”中填写本地代理客户端的 HTTP/Mixed 端口，然后点击“保存更改”。
+3. 从窗口顶部选择 Codex、Cursor 或 Grok Bot。启动器会自动识别常见安装目录及 Windows 安装记录，包括自定义安装位置。
+4. “代理启动”页面显示“已就绪”后，点击“启动”按钮。如果应用已经运行，请先完全退出应用和托盘进程，再重新检测。
 
-### 跨电脑历史同步
+“应用管理”可以选择应用、修改启动配置，或添加其他程序。内置应用保留在列表中，自定义应用可以在配置窗口移除。配置包含程序位置、代理方式、独立代理端口和启动参数；启动参数每行一个，路径含空格也无需手动加引号。内置 Codex 继续使用 Store 包，不需要手动选择程序文件。
 
-1. 在“设置”中选择移动硬盘上的历史仓库。程序会在其中创建或连接 `.codex-history-vault`。
-2. 打开“同步项目”。列表一行对应 Codex 的一个本机项目，而不是一个目录；项目名称、Codex 项目 UUID 和全部 `rootPaths` 会一起显示。一个项目有多个根目录，或多个项目共享根目录，都能被分别选择。
-3. 在电脑 A 选择本机 Codex 项目并创建同步项目。在电脑 B 连接同一仓库后，选择 B 上对应的 Codex 项目，绑定到同一个同步项目。绑定比较 Codex 项目 UUID，不要求两台电脑的绝对路径或盘符相同；同一同步项目也可以包含多个不同的 Codex 项目成员。
-4. 点击“立即同步”，或让托盘在 Codex 运行期间实时保存。会话按同步项目整理，并显示来源电脑与最后更新时间；导入后还会更新本机 Codex 的项目归属索引。
+| 应用 | 启动方式 | 安装位置 |
+| --- | --- | --- |
+| Codex | 官方 Store 包启动、签名与 helper 检查、进程代理环境 | 自动发现可信 Store 包 |
+| Cursor | Electron `--proxy-server` + HTTP / HTTPS 等环境变量 | 自动识别，或手动选择 `Cursor.exe` |
+| Grok Bot | Electron 代理参数 + 环境变量，并适配 Grok Bot 的网络环境开关 | 自动识别，或手动选择 `Grok Bot.exe` |
+| 自定义应用 | Electron 代理或环境变量模式 | 选择 `.exe` 文件 |
 
-Codex 运行期间，托盘会监听活跃和归档会话文件，变化稳定约 2.5 秒后用共享读取方式保存完整 JSONL 记录；watcher 会在目录晚创建、配置变化或缓冲区溢出后自动重建，每 60 秒还有一次兜底检查。这个实时阶段只从 Codex 读取并写入历史仓库，不写 Codex 正在使用的 SQLite/WAL。通过本工具启动 Codex 时会先立即启动应用，再在后台执行增量保存，不会让大型历史仓库阻塞 Codex。其他电脑保存到仓库的会话会立即出现在“会话列表”中；把外部会话合并进本机 Codex 侧边栏则在托盘监控到 Codex 自然退出后安全执行，无需为了备份而手动完全退出。
+每个应用默认跟随全局端口，也可在“应用设置”中关闭“跟随默认代理端口”，使用独立端口。配置和当前选择保存在 `%LOCALAPPDATA%\CodexProxy\applications.json`，覆盖升级会保留；未安装的内置应用不会阻止其他应用启动。启动器不修改系统代理、永久环境变量或应用账号配置。
 
-同步只共享会话 JSONL、标题和必要元数据，不复制 `auth.json`、配置、插件、日志或整个 SQLite 目录。手动“立即同步”在 Codex 运行中执行实时保存，在 Codex 未运行时执行完整双向合并。完整同步和导入采用磁盘流式处理，大型 JSONL 不会整份常驻内存；同步期间会创建可恢复的事务标记，仓库对象路径会经过越界校验，索引更新采用去重后的原子重写；退出 Codex Proxy 时也会终止本程序仍在运行的同步子进程并释放仓库锁。
+环境变量模式要求目标应用支持 `HTTP_PROXY` / `HTTPS_PROXY`。Electron 模式同时传入代理开关；应用内部的特殊网络实现仍可能需要应用自身的设置。Cursor 网络兼容模式与代理要求可参考 [Cursor 官方网络文档](https://cursor.com/docs/enterprise/network-configuration)；如果聊天连接异常，可在 Cursor 的 Network 设置中尝试 HTTP/1.1。Grok Bot 的企业网关与流式连接要求见 [官方代理文档](https://cursor.com/docs/grok-bot/proxies)。这里的连接检查验证 HTTP CONNECT 通道，不代表已经验证应用登录或聊天请求。
 
-同一会话在两台电脑上继续时，如果一份内容是另一份的完整前缀，程序会安全采用较长版本。如果双方已经分叉，两个版本都会保留，另一分支会显示为“冲突副本”，不会静默覆盖。导入前会备份被更新的会话、`session_index.jsonl` 和状态数据库，备份位于 `%LOCALAPPDATA%\CodexProxy\history-backups`。
+“运行诊断”跟随顶部所选应用，显示代理连接、应用版本、启动方式、程序位置和进程状态。Codex 额外检查 AppX 启动能力、快捷方式和文件签名。可以复制诊断摘要，用于排查问题。
 
-逻辑项目使用永久 UUID 标识，仓库对象中的结构化 `cwd` 会写成 `codex-project://<项目ID>`，多根目录项目会额外带 `/r1/...` 根目录索引。导入时再恢复为当前电脑绑定的对应根目录。若绑定目录和仓库都位于同一移动磁盘，程序还会记录卷内相对位置并适配盘符变化。聊天正文、命令输出和用户输入中的普通路径字符串不会被批量替换。
+“运行日志”读取本地启动和桌面日志，支持按级别、关键词筛选，并导出当前筛选结果。最多显示最近 500 条记录。
 
-关闭控制面板不会退出程序，而是缩小到右下角托盘。托盘图标每 15 秒检查一次代理监听、Codex 安装与运行状态：绿色表示就绪或运行正常，黄色表示有待应用更新，红色表示存在故障。双击托盘图标可重新打开控制面板；右键菜单可启动 Codex、刷新状态、打开日志、运行详细诊断或退出监控。
+“设置”支持浅色、深色、跟随系统主题、开机启动、关闭窗口留在托盘，以及自动检测开关。界面偏好独立保存在 `%LOCALAPPDATA%\CodexProxy\desktop-settings.json`，升级会保留。
 
-“登录 Windows 后在后台自动运行”是可选项，默认关闭。开启后只启动状态监控，不会自动启动 Codex。
+键盘操作：`F5` 重新检测，`Ctrl+Enter` 启动当前应用，`Alt+1` 代理启动，`Alt+2` 运行诊断，`Alt+3` 运行日志，`Alt+4` 设置，`Alt+5` 应用管理，`Ctrl+,` 打开设置，日志页的 `Ctrl+F` 聚焦搜索，`Esc` 关闭提示。
+
+默认关闭控制面板会缩小到右下角托盘，可在设置中改为完全退出。托盘图标每 15 秒检查一次当前应用的代理连接、安装与运行状态：绿色表示启动环境可用，红色表示存在故障。已有应用进程的代理环境无法从进程存在这一点确认。双击托盘图标可重新打开控制面板；右键菜单可以切换应用、启动当前应用、刷新状态、打开管理和诊断页面，或完全退出。
+
+“登录 Windows 后在后台自动运行”是可选项，默认关闭。开启后启动状态监控，需要时再手动启动应用。
 
 启动器会依次验证代理端口、HTTP CONNECT、官方 Store 包身份、文件签名、AppX 启动能力和 Codex 当前进程。helper 缓存损坏或版本变化时会原子刷新；启动命令执行后还会确认 Codex 进程确实出现。
 
-启动期间使用互斥锁，连续点击不会同时复制 helper 或重复启动 Codex。图形程序本身也只允许一个托盘实例；重复打开会唤醒现有窗口。
+启动期间使用互斥锁，连续点击不会同时复制 helper 或重复启动同一个程序。应用启动或检测期间会锁定应用切换，防止状态串到另一个应用。图形程序本身也只允许一个托盘实例；重复打开会唤醒现有窗口。退出启动器会取消自身的后台检查，不会结束已经启动的应用。
 
 ### 临时使用其他端口
 
@@ -161,20 +168,25 @@ powershell.exe -NoLogo -NoProfile -File ".\tests\Run-Tests.ps1"
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\Build-CodexProxyPackage.ps1"
 ```
 
-测试覆盖原生应用编译、四页单窗口导航、紧凑窗口布局、列表列宽适配、关键设置可见性、后台托盘生命周期、安全退出、快捷方式识别、配置优先级与验证、启动锁、日志轮转、helper 原子刷新、历史项目选择、跨电脑目录绑定、未选目录隔离、增量合并、盘符变化、分叉冲突保留、SQLite 备份与回填，以及自动更新发现和包激活等待。GitHub Actions 会在 Windows PowerShell 5.1 下运行同一测试入口。
+测试覆盖 WPF 编译与绑定、四页导航、浅色/深色和窄窗口渲染、重复启动拦截、输入校验、偏好持久化与失败回退、日志筛选与导出、安装向导升级锁定和错误恢复，以及原有代理启动、托盘生命周期、快捷方式、helper 缓存和自动更新回归。测试用假运行服务隔离真实 Codex 和开机启动注册。GitHub Actions 会在 Windows PowerShell 5.1 下运行同一测试入口。
+
+桌面渲染结果位于 `artifacts/desktop-4.1.0-preview`，安装向导渲染结果位于 `artifacts/setup-4.1.0-preview`。构建无需 Node.js、Rust、额外 NuGet 包或终端 .NET SDK。
 
 ## 项目结构
 
-- `src/CodexProxy.App.cs`：托盘菜单、后台状态监控与界面数据桥接。
-- `src/CodexProxy.MainWindow.cs`：四页单窗口界面、响应式布局和交互状态。
-- `src/CodexProxy.Ui.cs`：字体层级、代码绘制线性图标、品牌标识、颜色、圆角卡片、按钮、开关与列表等视觉组件。
+- `src/CodexProxy.App.cs`：WPF 应用生命周期、单实例事件、后台监控与托盘。
+- `src/CodexProxy.MainWindow.cs`：窗口行为、响应式导航、剪贴板、导出和快捷键。
+- `src/CodexProxy.ViewModel.cs`：可观察状态、异步命令、启动和设置流程。
+- `src/CodexProxy.Runtime.cs`：PowerShell 进程桥、端口配置和类型化诊断结果。
+- `src/CodexProxy.State.cs`：原子偏好存储、日志读取与轮转、通用命令。
+- `src/CodexProxy.Ui.cs` 与 `src/Desktop/`：主题、窗口框架、共享控件模板与 XAML 页面。
+- `src/CodexProxy.Setup.cs`：使用同一设计系统的异步安装与升级向导。
+- `CodexProxy.files.psd1`：安装和打包共用的产品文件清单。
 - `Generate-CodexProxyIcon.ps1`：生成包含 16–256 像素画布的应用图标资源。
 - `Build-CodexProxyApp.ps1`：使用 Windows 自带 .NET Framework 编译器生成 `CodexProxy.exe`。
 - `Build-CodexProxyPackage.ps1`：构建并打包独立安装目录与 ZIP 安装包，不修改现有安装。
 - `Build-CodexProxyInstaller.ps1`：编译可视化 Windows 安装向导 `CodexProxySetup.exe`。
 - `Start-CodexProxy.ps1`：无界面的安全启动内核，由图形程序调用。
-- `HistorySync.ps1`：可移动历史仓库、增量对象、冲突保留、路径映射、备份与 Codex 索引回填。
-- `docs/history-sync-design.md`：同步边界、仓库格式、冲突规则、SQLite 回填和恢复设计。
 - `Test-CodexProxy.ps1`：只读诊断和显式修复入口。
 - `Install-CodexProxy.ps1`：构建应用、稳定安装、覆盖升级、开始菜单和卸载注册。
 - `Uninstall-CodexProxy.ps1`：验证安装身份后移除程序、快捷方式和注册信息。

@@ -184,4 +184,17 @@ function Resolve-CodexProxyInstallTarget {
     [pscustomobject]@{ InstallDirectory=$target; IsUpgrade=$false; Source=$(if($requested){'Requested'}else{'Default'}) }
 }
 
-Export-ModuleMember -Function Resolve-CodexProxyInstallation,Resolve-CodexProxyInstallTarget
+function Remove-CodexProxyRetiredFiles {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$InstallDirectory)
+
+    $installRoot = ConvertTo-CodexProxyInstallPath -Path $InstallDirectory
+    if (-not $installRoot) { throw 'The installation directory is invalid.' }
+    # Only remove obsolete product files. User settings, backups and vaults stay intact.
+    foreach ($relativePath in @('HistorySync.ps1', 'Repair-CodexHistory.ps1', 'docs\history-sync-design.md')) {
+        $path = Join-Path $installRoot $relativePath
+        if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+    }
+}
+
+Export-ModuleMember -Function Resolve-CodexProxyInstallation,Resolve-CodexProxyInstallTarget,Remove-CodexProxyRetiredFiles

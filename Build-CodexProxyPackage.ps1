@@ -6,7 +6,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath($PSScriptRoot)
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $root 'artifacts\CodexProxy-3.5.8' }
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $root 'artifacts\CodexProxy-4.1.0' }
 $out = [IO.Path]::GetFullPath($OutputDirectory)
 if ([IO.Path]::GetFullPath($out).StartsWith(([IO.Path]::GetFullPath((Join-Path $root 'artifacts'))).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -eq $false) {
     throw '安装包输出目录必须位于项目 artifacts 目录内。'
@@ -16,12 +16,7 @@ New-Item -ItemType Directory -Path $out -Force | Out-Null
 $bin = Join-Path $out 'bin'
 & (Join-Path $root 'Build-CodexProxyApp.ps1') -OutputPath (Join-Path $bin 'CodexProxy.exe')
 & (Join-Path $root 'Build-CodexProxyInstaller.ps1') -OutputPath (Join-Path $out 'CodexProxySetup.exe')
-$files = @(
-    'Start-CodexProxy.ps1','Test-CodexProxy.ps1','HistorySync.ps1','Install-CodexProxy.ps1','Detect-CodexProxyInstallation.ps1','Build-CodexProxyApp.ps1','Build-CodexProxyInstaller.ps1','Build-CodexProxyPackage.ps1',
-    'Generate-CodexProxyIcon.ps1','Uninstall-CodexProxy.ps1','Repair-CodexHistory.ps1','CodexProxy.config.psd1','README.md',
-    'src\CodexProxy.Common.psm1','src\CodexProxy.Installation.psm1','src\CodexProxy.App.cs','src\CodexProxy.Ui.cs','src\CodexProxy.MainWindow.cs','src\CodexProxy.Setup.cs',
-    'assets\codex-proxy.ico','docs\history-sync-design.md'
-)
+$files = (Import-PowerShellDataFile -LiteralPath (Join-Path $root 'CodexProxy.files.psd1')).Files
 foreach ($relative in $files) {
     $source = Join-Path $root $relative
     $destination = Join-Path $out $relative
